@@ -1,4 +1,4 @@
-module github.com/viant/binder
+module github.com/viant/bindly
 
 go 1.23.1
 
