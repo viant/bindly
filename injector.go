@@ -2,6 +2,7 @@ package bindly
 
 import (
 	"github.com/viant/bindly/locator"
+	"github.com/viant/bindly/resource"
 	"github.com/viant/bindly/types"
 	"github.com/viant/bindly/xform"
 	"github.com/viant/bindly/xform/conv"
@@ -9,6 +10,10 @@ import (
 
 // Injector represents dependency injector
 type Injector struct {
+	parent          *Injector
+	scopedProviders []locator.Provider
+	resources       *resource.Store
+	initErr         error
 	locators        *locator.Registry
 	transformers    *xform.Registry
 	providers       []locator.Provider
@@ -21,8 +26,9 @@ type Injector struct {
 }
 
 // NewInjector creates injector
-func NewInjector(options ...InjectorOption) *Injector {
+func NewInjector(options ...InjectorOption) (*Injector, error) {
 	ret := &Injector{
+		resources:       resource.New(),
 		locators:        locator.NewRegistry(),
 		transformers:    xform.NewRegistry(),
 		bindingTag:      bindingTag,
@@ -39,12 +45,18 @@ func NewInjector(options ...InjectorOption) *Injector {
 		conv.Init(ret.transformers)
 	}
 	if len(ret.providers) > 0 {
+		ret.scopedProviders = append([]locator.Provider(nil), ret.providers...)
 		for _, provider := range ret.providers {
-			_ = ret.locators.Register(provider)
+			if err := ret.locators.Register(provider); err != nil {
+				return nil, err
+			}
 		}
 		ret.providers = nil
 	}
-	return ret
+	if ret.initErr != nil {
+		return nil, ret.initErr
+	}
+	return ret, nil
 }
 
 // TransformerRegistry returns the transformer registry

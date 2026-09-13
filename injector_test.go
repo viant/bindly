@@ -79,8 +79,11 @@ func TestInjector_Inject(t *testing.T) {
 		buildin.Map("instance", "Instances", 1),
 		buildin.Map("interface", "Interfaces", 1)))
 
-	injector := bindly.NewInjector(opts...)
-	err := bindly.WithState[Foo](injector, dependencies).Inject(context.Background(), foo)
+	injector, err := bindly.NewInjector(opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = bindly.WithState[Foo](injector, dependencies).Inject(context.Background(), foo)
 	if err != nil {
 		return
 	}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"github.com/viant/bindly/locator"
 	"github.com/viant/structology"
+	"reflect"
+	"strings"
 )
 
 type (
@@ -20,17 +22,42 @@ type (
 	}
 )
 
-func (l *mapLocator) Value(ctx context.Context, name string) (interface{}, bool, error) {
-	value, err := l.state.Value(l.rootSelector)
-	if err != nil {
-		return nil, false, err
+func (l *mapLocator) Value(ctx context.Context, targetType reflect.Type, name string) (interface{}, bool, error) {
+	if l.state == nil {
+		return nil, false, nil
 	}
-	iFaces, ok := value.(map[string]interface{})
-	if !ok {
-		return nil, false, fmt.Errorf("expected map[string]interface{} but had %T", value)
+	// Map values must use Go's map access, not an unsafe map header fabricated
+	// by older structural selectors (whose layout changed in Go 1.24).
+	value := reflect.ValueOf(l.state.State())
+	for _, field := range strings.Split(l.rootSelector, ".") {
+		for value.IsValid() && (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) {
+			if value.IsNil() {
+				return nil, false, nil
+			}
+			value = value.Elem()
+		}
+		if field == "" {
+			continue
+		}
+		if !value.IsValid() || value.Kind() != reflect.Struct {
+			return nil, false, fmt.Errorf("map source %s is not a struct field", l.rootSelector)
+		}
+		value = value.FieldByName(field)
 	}
-	result, ok := iFaces[name]
-	return result, ok, nil
+	for value.IsValid() && value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return nil, false, nil
+		}
+		value = value.Elem()
+	}
+	if !value.IsValid() || value.Kind() != reflect.Map || value.Type().Key().Kind() != reflect.String {
+		return nil, false, fmt.Errorf("map source %s requires string keys", l.rootSelector)
+	}
+	result := value.MapIndex(reflect.ValueOf(name).Convert(value.Type().Key()))
+	if !result.IsValid() {
+		return nil, false, nil
+	}
+	return result.Interface(), true, nil
 }
 
 func (p *mapLocator) Kind() string {

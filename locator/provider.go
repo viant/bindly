@@ -7,3 +7,5 @@ type Provider interface {
 	Kind() string
 	Priority() int
 }
+
+type CachePolicy interface{ DefaultCacheable() bool }

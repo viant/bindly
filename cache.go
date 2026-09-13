@@ -55,7 +55,11 @@ func (c *ValueCache) Save(ctx context.Context, destURL string) error {
 
 // Load loads the cache from disk
 func (c *ValueCache) Load(ctx context.Context, URL string) error {
-	if ok, _ := c.fs.Exists(ctx, URL); ok {
+	exists, err := c.fs.Exists(ctx, URL)
+	if err != nil {
+		return err
+	}
+	if !exists {
 		return nil
 	}
 	reader, err := c.fs.OpenURL(ctx, URL)
