@@ -873,6 +873,7 @@ github.com/viant/structology v0.6.2-0.20250313015649-ba0d2c9233c8 h1:J9hMb09vRcw
 github.com/viant/structology v0.6.2-0.20250313015649-ba0d2c9233c8/go.mod h1:63XfkzUyNw7wdi99HJIsH2Rg3d5AOumqbWLUYytOkxU=
 github.com/viant/structology v0.6.2-0.20250313135129-f2630b17b35c h1:pSOMW1cEaIM5RRuLJwtFsm2Vbl1wzRgTAwb72oyp1JE=
 github.com/viant/structology v0.6.2-0.20250313135129-f2630b17b35c/go.mod h1:63XfkzUyNw7wdi99HJIsH2Rg3d5AOumqbWLUYytOkxU=
+github.com/viant/structology v0.9.1-0.20260913032207-c3a33d0b7f98 h1:55/1rPMCIlidLd5Uq3zSFxquMX3MMNW0OnVKVtx0YEI=
 github.com/viant/structology v0.9.1-0.20260913032207-c3a33d0b7f98/go.mod h1:AAFeViwniqua61sTKdOz/zlbLpN5vE4OVhDoiZJaMgA=
 github.com/viant/tagly v0.2.0 h1:bZhGDBtZbblO83omlAsJ9PnYVAbXYr9syxY6HUgT6iw=
 github.com/viant/tagly v0.2.0/go.mod h1:vV8QgJkhug+X+qyKds8av0fhjD+4u7IhNtowL1KGQ5A=

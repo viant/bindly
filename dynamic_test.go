@@ -25,15 +25,18 @@ type cacheScope struct {
 }
 
 func TestDynamicContextAssign(t *testing.T) {
-	injector := bindly.NewInjector(bindly.WithProviders(
+	injector, err := bindly.NewInjector(bindly.WithProviders(
 		buildin.Struct("input", "Input", 1),
 	))
+	if err != nil {
+		t.Fatal(err)
+	}
 	scope := bindly.WithDynamicState(injector, &dynamicScope{
 		Input: &dynamicInput{ID: 7, Name: "abc"},
 	})
 
 	target := &dynamicInput{}
-	err := scope.Assign(context.Background(), target, &state.Location{Kind: "input"})
+	err = scope.Assign(context.Background(), target, &state.Location{Kind: "input"})
 	if err != nil {
 		t.Fatalf("assign failed: %v", err)
 	}
@@ -42,9 +45,12 @@ func TestDynamicContextAssign(t *testing.T) {
 }
 
 func TestDynamicContextValue(t *testing.T) {
-	injector := bindly.NewInjector(bindly.WithProviders(
+	injector, err := bindly.NewInjector(bindly.WithProviders(
 		buildin.Struct("input", "Input", 1),
 	))
+	if err != nil {
+		t.Fatal(err)
+	}
 	scope := bindly.WithDynamicState(injector, &dynamicScope{
 		Input: &dynamicInput{ID: 11, Name: "xyz"},
 	})
@@ -65,24 +71,30 @@ func TestDynamicContextValue(t *testing.T) {
 }
 
 func TestDynamicContextAssignRejectsNonPointerTarget(t *testing.T) {
-	injector := bindly.NewInjector(bindly.WithProviders(
+	injector, err := bindly.NewInjector(bindly.WithProviders(
 		buildin.Struct("input", "Input", 1),
 	))
+	if err != nil {
+		t.Fatal(err)
+	}
 	scope := bindly.WithDynamicState(injector, &dynamicScope{
 		Input: &dynamicInput{ID: 3},
 	})
 
-	err := scope.Assign(context.Background(), dynamicInput{}, &state.Location{Kind: "input"})
+	err = scope.Assign(context.Background(), dynamicInput{}, &state.Location{Kind: "input"})
 	if err == nil {
 		t.Fatalf("expected non-pointer assign to fail")
 	}
 }
 
 func TestDynamicContextInjectCacheUsesSourceLocation(t *testing.T) {
-	injector := bindly.NewInjector(bindly.WithProviders(
+	injector, err := bindly.NewInjector(bindly.WithProviders(
 		buildin.Map("query", "Query", 1),
 		buildin.Map("header", "Header", 1),
 	))
+	if err != nil {
+		t.Fatal(err)
+	}
 	scope := bindly.WithDynamicState(injector, &cacheScope{
 		Query:  map[string]interface{}{"id": 7},
 		Header: map[string]interface{}{"id": true},
