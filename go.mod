@@ -9,6 +9,8 @@ require (
 	github.com/viant/tagly v0.3.0
 )
 
+require golang.org/x/mod v0.28.0 // indirect
+
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/go-errors/errors v1.5.1 // indirect

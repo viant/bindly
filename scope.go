@@ -2,6 +2,7 @@ package bindly
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -15,9 +16,10 @@ import (
 
 type BindOption func(*bindOptions)
 type bindOptions struct {
-	plan   *Plan
-	source any
-	cache  *ValueCache
+	plan     *Plan
+	source   any
+	cache    *ValueCache
+	observer BindingObserver
 }
 
 func WithPlan(plan *Plan) BindOption   { return func(o *bindOptions) { o.plan = plan } }
@@ -44,7 +46,7 @@ func (i *Injector) Bind(ctx context.Context, target any, options ...BindOption) 
 	if source == nil {
 		source = target
 	}
-	invocation := &invocation{injector: i, active: map[string]bool{}, cache: map[resolutionKey]resolution{}, persistent: settings.cache}
+	invocation := &invocation{injector: i, active: map[string]bool{}, cache: map[resolutionKey]resolution{}, persistent: settings.cache, observer: settings.observer}
 	if source != nil {
 		invocation.source = structology.NewStateType(reflect.TypeOf(source)).WithValue(source)
 	}
@@ -57,6 +59,7 @@ type invocation struct {
 	active     map[string]bool
 	cache      map[resolutionKey]resolution
 	persistent *ValueCache
+	observer   BindingObserver
 }
 
 type resolutionKey struct {
@@ -65,8 +68,9 @@ type resolutionKey struct {
 	target   reflect.Type
 }
 type resolution struct {
-	value any
-	found bool
+	value    any
+	found    bool
+	metadata any
 }
 
 func (s *invocation) Bind(ctx context.Context, target any) error { return s.bind(ctx, target, nil) }
@@ -118,57 +122,70 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 				sourceType = nil
 			}
 		}
-		value, found, err := s.resolveWithPolicy(ctx, &binding.Location, sourceType, binding.Cacheable)
-		if err == nil && !found && binding.DefaultValue != nil {
-			value, err = (conv.ValueConverter{}).Convert(binding.DefaultValue, sourceType)
-			found = true
+		result, err := s.resolveResult(ctx, &binding.Location, sourceType, binding.Cacheable)
+		if err == nil && !result.found && binding.DefaultValue != nil {
+			result.value, err = (conv.ValueConverter{}).Convert(binding.DefaultValue, sourceType)
+			result.found = true
+			result.metadata = nil
 		}
-		if err == nil && (!found || nilValue(value)) && binding.Required != nil && *binding.Required {
+		if err == nil && (!result.found || nilValue(result.value)) && binding.Required != nil && *binding.Required {
 			err = fmt.Errorf("missing required %s value %q", binding.Location.Kind, binding.Location.In)
 		}
 		if err != nil {
 			return &BindingError{Path: binding.Path, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
 		}
-		if !found {
+		if !result.found {
 			if err := binding.validateRecordCount(nil); err != nil {
 				return &BindingError{Path: binding.Path, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
 			}
 			continue
 		}
 		if sourceType != nil {
-			value, err = (conv.ValueConverter{}).Convert(value, sourceType)
+			err = result.convert(sourceType)
 			if err != nil {
 				return &BindingError{Path: binding.Path, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
 			}
 		}
 		if binding.Transformer != nil {
 			if binding.countsSourceRecords() {
-				if err = binding.validateRecordCount(value); err != nil {
+				if err = binding.validateRecordCount(result.value); err != nil {
 					return &BindingError{Path: binding.Path, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
 				}
 			}
-			value, err = binding.Transformer.Transform(ctx, s, value)
+			result.metadata = nil
+			result.value, err = binding.Transformer.Transform(ctx, s, result.value)
 			if err != nil {
 				return &BindingError{Path: binding.Path, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
 			}
 		}
-		value, err = (conv.ValueConverter{}).Convert(value, targetType)
+		err = result.convert(targetType)
 		if err != nil {
 			return &BindingError{Path: binding.Path, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
 		}
-		if value == nil {
-			value = reflect.Zero(targetType).Interface()
+		if result.value == nil {
+			result.value = reflect.Zero(targetType).Interface()
+			result.metadata = nil
 		}
 		if binding.Transformer == nil || !binding.countsSourceRecords() {
-			if err = binding.validateRecordCount(value); err != nil {
+			if err = binding.validateRecordCount(result.value); err != nil {
 				return &BindingError{Path: binding.Path, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
 			}
 		}
-		if err = plan.fields[binding.Path].Set(targetValue, value); err != nil {
+		if err = plan.fields[binding.Path].Set(targetValue, result.value); err != nil {
 			return err
 		}
 		if binding.MarkerField != "" {
 			if err = plan.fields[binding.MarkerField].Set(targetValue, true); err != nil {
+				return err
+			}
+		}
+		if s.observer != nil {
+			assigned, ok := plan.fields[binding.Path].Value(targetValue)
+			if !ok || !assigned.CanInterface() {
+				return &BindingError{Path: binding.Path, Cause: fmt.Errorf("assigned field is not accessible")}
+			}
+			result.value = assigned.Interface()
+			if err = s.observed(ctx, target, binding, result); err != nil {
 				return err
 			}
 		}
@@ -192,12 +209,17 @@ func (s *invocation) resolve(ctx context.Context, location *state.Location, targ
 }
 
 func (s *invocation) resolveWithPolicy(ctx context.Context, location *state.Location, target reflect.Type, cacheable *bool) (any, bool, error) {
+	result, err := s.resolveResult(ctx, location, target, cacheable)
+	return result.value, result.found, err
+}
+
+func (s *invocation) resolveResult(ctx context.Context, location *state.Location, target reflect.Type, cacheable *bool) (resolution, error) {
 	if location == nil {
-		return nil, false, fmt.Errorf("binding location is required")
+		return resolution{}, fmt.Errorf("binding location is required")
 	}
 	key := location.Kind + ":" + location.In
 	if s.active[key] {
-		return nil, false, fmt.Errorf("cyclic binding dependency %s", key)
+		return resolution{}, fmt.Errorf("cyclic binding dependency %s", key)
 	}
 	s.active[key] = true
 	defer delete(s.active, key)
@@ -218,18 +240,22 @@ func (s *invocation) resolveWithPolicy(ctx context.Context, location *state.Loca
 		// considering any cached parent value, so cached defaults cannot mask overrides.
 		persistentKey := fmt.Sprintf("%p:%s:%s:%v", current, location.Kind, location.In, target)
 		if shouldCache {
+			if value, ok := s.cache[cacheKey]; ok {
+				return value, nil
+			}
 			if s.persistent != nil {
 				if value, ok := s.persistent.Get(persistentKey); ok {
-					return value, true, nil
+					result := resolution{value: value, found: true}
+					if err := result.unwrap(false); err != nil {
+						return resolution{}, err
+					}
+					return result, nil
 				}
-			}
-			if value, ok := s.cache[cacheKey]; ok {
-				return value.value, value.found, nil
 			}
 		}
 		valueLocator := provider.Locate(s.source)
 		if valueLocator == nil {
-			return nil, false, fmt.Errorf("provider %s returned no locator", location.Kind)
+			return resolution{}, fmt.Errorf("provider %s returned no locator", location.Kind)
 		}
 		var value any
 		var found bool
@@ -240,19 +266,26 @@ func (s *invocation) resolveWithPolicy(ctx context.Context, location *state.Loca
 			value, found, err = valueLocator.Value(ctx, target, location.In)
 		}
 		if found || err != nil {
+			result := resolution{value: value, found: found}
+			if unwrapErr := result.unwrap(s.MetadataRequested()); unwrapErr != nil {
+				return resolution{}, errors.Join(err, unwrapErr)
+			}
 			if shouldCache && err == nil {
 				if s.cache == nil {
 					s.cache = map[resolutionKey]resolution{}
 				}
-				s.cache[cacheKey] = resolution{value: value, found: found}
+				s.cache[cacheKey] = result
 				if s.persistent != nil && found {
-					s.persistent.Put(persistentKey, value)
+					s.persistent.Put(persistentKey, result.value)
 				}
 			}
-			return value, found, err
+			if err != nil {
+				result.metadata = nil
+			}
+			return result, err
 		}
 	}
-	return nil, false, nil
+	return resolution{}, nil
 }
 
 func nilValue(value any) bool {
