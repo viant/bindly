@@ -20,3 +20,6 @@ type ScopedLocator interface {
 	Locator
 	ValueInScope(context.Context, Scope, reflect.Type, string) (any, bool, error)
 }
+
+// AuthoritativeLocator distinguishes an owned absence from provider fallback.
+type AuthoritativeLocator interface{ Owns(string) bool }

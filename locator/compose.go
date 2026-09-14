@@ -59,9 +59,20 @@ func (l *composedLocator) ValueInScope(ctx context.Context, scope Scope, target 
 		} else {
 			value, found, err = candidate.Value(ctx, target, name)
 		}
-		if found || err != nil {
+		owned, _ := candidate.(AuthoritativeLocator)
+		if found || err != nil || (owned != nil && owned.Owns(name)) {
 			return value, found, err
 		}
 	}
 	return nil, false, nil
+}
+
+func (l *composedLocator) Owns(name string) bool {
+	for _, layer := range l.provider.layers {
+		candidate := layer.Provider.Locate(l.state)
+		if owned, ok := candidate.(AuthoritativeLocator); ok && owned.Owns(name) {
+			return true
+		}
+	}
+	return false
 }
