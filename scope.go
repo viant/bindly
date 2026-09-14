@@ -59,14 +59,15 @@ func (i *Injector) Bind(ctx context.Context, target any, options ...BindOption) 
 }
 
 type invocation struct {
-	injector     *Injector
-	source       *structology.State
-	active       map[string]bool
-	cache        map[resolutionKey]resolution
-	persistent   *ValueCache
-	observer     BindingObserver
-	replay       *ReplayBinding
-	replayTarget any
+	captureSources bool
+	injector       *Injector
+	source         *structology.State
+	active         map[string]bool
+	cache          map[resolutionKey]resolution
+	persistent     *ValueCache
+	observer       BindingObserver
+	replay         *ReplayBinding
+	replayTarget   any
 }
 
 type resolutionKey struct {
@@ -325,7 +326,13 @@ func (s *invocation) resolveResult(ctx context.Context, location *state.Location
 		var value any
 		var found bool
 		var err error
-		if scoped, ok := valueLocator.(locator.ScopedLocator); ok {
+		var raw locator.SourceCapturer
+		if s.captureSources {
+			raw, _ = valueLocator.(locator.SourceCapturer)
+		}
+		if raw != nil {
+			value, found, err = raw.CaptureSource(ctx, target, location.In)
+		} else if scoped, ok := valueLocator.(locator.ScopedLocator); ok {
 			value, found, err = scoped.ValueInScope(ctx, s, target, location.In)
 		} else {
 			value, found, err = valueLocator.Value(ctx, target, location.In)

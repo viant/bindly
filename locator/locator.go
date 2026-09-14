@@ -23,3 +23,11 @@ type ScopedLocator interface {
 
 // AuthoritativeLocator distinguishes an owned absence from provider fallback.
 type AuthoritativeLocator interface{ Owns(string) bool }
+
+// SourceCapturer lets a source preserve its raw representation before target
+// decoding (for example JSON body omission/number precision). JSON source bytes
+// use json.RawMessage; other values retain normal declared source conversion.
+// Implementations must not bind targets or evaluate downstream dependencies.
+type SourceCapturer interface {
+	CaptureSource(context.Context, reflect.Type, string) (any, bool, error)
+}

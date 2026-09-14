@@ -46,6 +46,12 @@ func (l *composedLocator) Value(ctx context.Context, target reflect.Type, name s
 	return l.ValueInScope(ctx, nil, target, name)
 }
 func (l *composedLocator) ValueInScope(ctx context.Context, scope Scope, target reflect.Type, name string) (any, bool, error) {
+	return l.value(ctx, scope, target, name, false)
+}
+func (l *composedLocator) CaptureSource(ctx context.Context, target reflect.Type, name string) (any, bool, error) {
+	return l.value(ctx, nil, target, name, true)
+}
+func (l *composedLocator) value(ctx context.Context, scope Scope, target reflect.Type, name string, capture bool) (any, bool, error) {
 	for _, layer := range l.provider.layers {
 		candidate := layer.Provider.Locate(l.state)
 		if candidate == nil {
@@ -54,7 +60,13 @@ func (l *composedLocator) ValueInScope(ctx context.Context, scope Scope, target 
 		var value any
 		var found bool
 		var err error
-		if scoped, ok := candidate.(ScopedLocator); ok && scope != nil {
+		var raw SourceCapturer
+		if capture {
+			raw, _ = candidate.(SourceCapturer)
+		}
+		if raw != nil {
+			value, found, err = raw.CaptureSource(ctx, target, name)
+		} else if scoped, ok := candidate.(ScopedLocator); ok && scope != nil {
 			value, found, err = scoped.ValueInScope(ctx, scope, target, name)
 		} else {
 			value, found, err = candidate.Value(ctx, target, name)
