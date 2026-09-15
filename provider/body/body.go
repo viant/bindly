@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/viant/bindly/input"
 	"mime"
 	"reflect"
 	"strings"
@@ -26,7 +27,7 @@ func WithExactFieldNames() Option { return func(s *Source) { s.exact = true } }
 func New(raw []byte, contentType string, aliases map[string]string, options ...Option) (*Source, error) {
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	if err != nil && contentType != "" {
-		return nil, err
+		return nil, &input.Error{Cause: err}
 	}
 	s := &Source{raw: append([]byte(nil), raw...), mediaType: mediaType, aliases: map[string]string{}}
 	for name, alias := range aliases {
@@ -53,7 +54,7 @@ func (s *Source) Value(_ context.Context, target reflect.Type, name string) (any
 		if name != "" {
 			var object map[string]json.RawMessage
 			if err := json.Unmarshal(raw, &object); err != nil {
-				return nil, false, err
+				return nil, false, &input.Error{Cause: err}
 			}
 			var ok bool
 			raw, ok = object[name]
@@ -61,7 +62,7 @@ func (s *Source) Value(_ context.Context, target reflect.Type, name string) (any
 				for key, value := range object {
 					if strings.EqualFold(key, name) {
 						if ok {
-							return nil, false, fmt.Errorf("ambiguous body field %q", name)
+							return nil, false, &input.Error{Cause: fmt.Errorf("ambiguous body field %q", name)}
 						}
 						raw, ok = value, true
 					}
@@ -77,14 +78,17 @@ func (s *Source) Value(_ context.Context, target reflect.Type, name string) (any
 		if target == nil {
 			var value any
 			err := json.Unmarshal(raw, &value)
-			return value, true, err
+			if err != nil {
+				return nil, true, &input.Error{Cause: err}
+			}
+			return value, true, nil
 		}
 		if target == reflect.TypeOf(json.RawMessage{}) {
 			return append(json.RawMessage(nil), raw...), true, nil
 		}
 		value := reflect.New(target)
 		if err := json.Unmarshal(raw, value.Interface()); err != nil {
-			return nil, true, err
+			return nil, true, &input.Error{Cause: err}
 		}
 		if err := s.markPresence(value.Elem(), raw); err != nil {
 			return nil, true, err
@@ -92,7 +96,7 @@ func (s *Source) Value(_ context.Context, target reflect.Type, name string) (any
 		return value.Elem().Interface(), true, nil
 	}
 	if name != "" {
-		return nil, false, fmt.Errorf("named fields require a JSON body")
+		return nil, false, &input.Error{Code: 415, Cause: fmt.Errorf("named fields require a JSON body")}
 	}
 	valueType := target
 	for valueType != nil && valueType.Kind() == reflect.Pointer {
@@ -101,8 +105,14 @@ func (s *Source) Value(_ context.Context, target reflect.Type, name string) (any
 	converter := conv.ValueConverter{DisallowJSON: true}
 	if valueType == reflect.TypeOf([]byte{}) {
 		value, err := converter.Convert(append([]byte(nil), raw...), target)
-		return value, true, err
+		if err != nil {
+			return nil, true, &input.Error{Cause: err}
+		}
+		return value, true, nil
 	}
 	value, err := converter.Convert(string(raw), target)
-	return value, true, err
+	if err != nil {
+		return nil, true, &input.Error{Cause: err}
+	}
+	return value, true, nil
 }

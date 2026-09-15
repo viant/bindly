@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/viant/bindly/input"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -123,12 +124,12 @@ func New(request *http.Request, options ...Option) (*Scope, error) {
 	clone := request.Clone(request.Context())
 	clone.Body = io.NopCloser(bytes.NewReader(raw))
 	if err = clone.ParseForm(); err != nil {
-		return nil, err
+		return nil, &input.Error{Cause: err}
 	}
 	mediaType, _, _ := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	if mediaType == "multipart/form-data" {
 		if err = clone.ParseMultipartForm(32 << 20); err != nil {
-			return nil, err
+			return nil, &input.Error{Cause: err}
 		}
 		if clone.MultipartForm != nil && clone.MultipartForm != request.MultipartForm {
 			s.cleanup = &multipartCleanup{form: clone.MultipartForm}
