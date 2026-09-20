@@ -118,3 +118,45 @@ func (p *Plan) TargetType() reflect.Type {
 	}
 	return p.target
 }
+
+// Presence reads a binding's compiled presence marker. Inputs without a marker
+// carry values unconditionally. Missing marker pointers represent absence.
+func (p *Plan) Presence(target any, path string) (bool, error) {
+	marker, err := p.presenceMarker(target, path)
+	if err != nil {
+		return false, err
+	}
+	if marker == "" {
+		return true, nil
+	}
+	value, found := p.fields[marker].Value(reflect.ValueOf(target))
+	if !found {
+		return false, nil
+	}
+	return value.Bool(), nil
+}
+
+// SetPresence restores presence through the same compiled marker used by Bind.
+func (p *Plan) SetPresence(target any, path string, present bool) error {
+	marker, err := p.presenceMarker(target, path)
+	if err != nil || marker == "" {
+		return err
+	}
+	return p.fields[marker].Set(reflect.ValueOf(target), present)
+}
+
+func (p *Plan) presenceMarker(target any, path string) (string, error) {
+	if p == nil {
+		return "", fmt.Errorf("binding plan is required")
+	}
+	value := reflect.ValueOf(target)
+	if !value.IsValid() || value.Kind() != reflect.Pointer || value.IsNil() || value.Elem().Type() != p.target {
+		return "", fmt.Errorf("presence target must be *%s", p.target)
+	}
+	for _, binding := range p.bindings {
+		if binding.Path == path {
+			return binding.MarkerField, nil
+		}
+	}
+	return "", fmt.Errorf("presence binding %s is not defined", path)
+}

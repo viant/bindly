@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/viant/bindly/input"
 	"reflect"
 	"sort"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/viant/bindly/state"
 	"github.com/viant/bindly/xform/conv"
 	"github.com/viant/structology"
+	xshape "github.com/viant/x/shape"
 )
 
 type BindOption func(*bindOptions)
@@ -20,6 +22,7 @@ type bindOptions struct {
 	source   any
 	cache    *ValueCache
 	observer BindingObserver
+	replay   *ReplayBinding
 }
 
 func WithPlan(plan *Plan) BindOption   { return func(o *bindOptions) { o.plan = plan } }
@@ -42,11 +45,14 @@ func (i *Injector) Bind(ctx context.Context, target any, options ...BindOption) 
 	for _, option := range options {
 		option(settings)
 	}
+	if settings.replay != nil && settings.replay.Replay == nil {
+		return fmt.Errorf("replay values are required")
+	}
 	source := settings.source
 	if source == nil {
 		source = target
 	}
-	invocation := &invocation{injector: i, active: map[string]bool{}, cache: map[resolutionKey]resolution{}, persistent: settings.cache, observer: settings.observer}
+	invocation := &invocation{injector: i, active: map[string]bool{}, cache: map[resolutionKey]resolution{}, persistent: settings.cache, observer: settings.observer, replay: settings.replay, replayTarget: target}
 	if source != nil {
 		invocation.source = structology.NewStateType(reflect.TypeOf(source)).WithValue(source)
 	}
@@ -54,12 +60,15 @@ func (i *Injector) Bind(ctx context.Context, target any, options ...BindOption) 
 }
 
 type invocation struct {
-	injector   *Injector
-	source     *structology.State
-	active     map[string]bool
-	cache      map[resolutionKey]resolution
-	persistent *ValueCache
-	observer   BindingObserver
+	captureSources bool
+	injector       *Injector
+	source         *structology.State
+	active         map[string]bool
+	cache          map[resolutionKey]resolution
+	persistent     *ValueCache
+	observer       BindingObserver
+	replay         *ReplayBinding
+	replayTarget   any
 }
 
 type resolutionKey struct {
@@ -97,7 +106,41 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 	sort.SliceStable(bindings, func(i, j int) bool {
 		return s.priority(bindings[i].Location.Kind) < s.priority(bindings[j].Location.Kind)
 	})
-	for _, binding := range bindings {
+	replaying := s.replay != nil && s.replay.Replay != nil && s.replayTarget == target
+	selectedCount := 0
+	var replayAssigned map[string]bool
+	if replaying {
+		replayAssigned = map[string]bool{}
+		if s.replay.Replay.Plan() != plan {
+			return fmt.Errorf("replay belongs to a different canonical plan")
+		}
+		sort.SliceStable(bindings, func(i, j int) bool {
+			_, left := s.replay.Replay.plan.preflight[bindings[i].Path]
+			_, right := s.replay.Replay.plan.preflight[bindings[j].Path]
+			return left && !right
+		})
+		selectedCount = len(s.replay.Replay.plan.preflight)
+	}
+	checkpoint := func() error {
+		if s.replay.Gate != nil {
+			if err := s.replay.Replay.authorize(ctx, target, s.replay.Gate); err != nil {
+				return err
+			}
+		}
+		if s.replay.Replay.prepared == nil || s.replay.Gate != nil {
+			return s.replay.Replay.capturePrepared(ctx, target, replayAssigned)
+		}
+		return nil
+	}
+	for bindingIndex, binding := range bindings {
+		if replaying && bindingIndex == selectedCount {
+			if err := checkpoint(); err != nil {
+				return err
+			}
+			if s.replay.Only {
+				return nil
+			}
+		}
 		if binding.When != "" {
 			if s.source == nil {
 				return fmt.Errorf("binding %s condition requires source state", binding.Path)
@@ -122,14 +165,32 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 				sourceType = nil
 			}
 		}
-		result, err := s.resolveResult(ctx, &binding.Location, sourceType, binding.Cacheable)
-		if err == nil && !result.found && binding.DefaultValue != nil {
+		var result resolution
+		var err error
+		preparedValue := false
+		selectedBinding, selected := BindingSpec{}, false
+		if replaying {
+			selectedBinding, selected = s.replay.Replay.plan.fields[binding.Path]
+		}
+		if selected {
+			if prepared, ok := s.replay.Replay.prepared[binding.Path]; ok {
+				result.value, err = (xshape.Runtime{}).CloneValue(prepared.value)
+				result.found = prepared.found
+				preparedValue = true
+				sourceType = targetType
+			} else {
+				result, err = s.replay.Replay.source(ctx, selectedBinding, sourceType)
+			}
+		} else {
+			result, err = s.resolveResult(ctx, &binding.Location, sourceType, binding.Cacheable)
+		}
+		if !preparedValue && err == nil && !result.found && binding.DefaultValue != nil {
 			result.value, err = (conv.ValueConverter{}).Convert(binding.DefaultValue, sourceType)
 			result.found = true
 			result.metadata = nil
 		}
 		if err == nil && (!result.found || nilValue(result.value)) && binding.Required != nil && *binding.Required {
-			err = fmt.Errorf("missing required %s value %q", binding.Location.Kind, binding.Location.In)
+			err = binding.inputError(fmt.Errorf("missing required %s value %q", binding.Location.Kind, binding.Location.In))
 		}
 		if err != nil {
 			return &BindingError{Path: binding.Path, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
@@ -141,12 +202,12 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 			continue
 		}
 		if sourceType != nil {
-			err = result.convert(sourceType)
+			err = binding.inputError(result.convert(sourceType))
 			if err != nil {
 				return &BindingError{Path: binding.Path, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
 			}
 		}
-		if binding.Transformer != nil {
+		if !preparedValue && binding.Transformer != nil {
 			if binding.countsSourceRecords() {
 				if err = binding.validateRecordCount(result.value); err != nil {
 					return &BindingError{Path: binding.Path, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
@@ -159,6 +220,9 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 			}
 		}
 		err = result.convert(targetType)
+		if binding.Transformer == nil {
+			err = binding.inputError(err)
+		}
 		if err != nil {
 			return &BindingError{Path: binding.Path, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
 		}
@@ -166,7 +230,7 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 			result.value = reflect.Zero(targetType).Interface()
 			result.metadata = nil
 		}
-		if binding.Transformer == nil || !binding.countsSourceRecords() {
+		if preparedValue || binding.Transformer == nil || !binding.countsSourceRecords() {
 			if err = binding.validateRecordCount(result.value); err != nil {
 				return &BindingError{Path: binding.Path, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
 			}
@@ -179,6 +243,9 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 				return err
 			}
 		}
+		if selected {
+			replayAssigned[binding.Path] = true
+		}
 		if s.observer != nil {
 			assigned, ok := plan.fields[binding.Path].Value(targetValue)
 			if !ok || !assigned.CanInterface() {
@@ -189,6 +256,9 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 				return err
 			}
 		}
+	}
+	if replaying && selectedCount == len(bindings) {
+		return checkpoint()
 	}
 	return nil
 }
@@ -260,12 +330,19 @@ func (s *invocation) resolveResult(ctx context.Context, location *state.Location
 		var value any
 		var found bool
 		var err error
-		if scoped, ok := valueLocator.(locator.ScopedLocator); ok {
+		var raw locator.SourceCapturer
+		if s.captureSources {
+			raw, _ = valueLocator.(locator.SourceCapturer)
+		}
+		if raw != nil {
+			value, found, err = raw.CaptureSource(ctx, target, location.In)
+		} else if scoped, ok := valueLocator.(locator.ScopedLocator); ok {
 			value, found, err = scoped.ValueInScope(ctx, s, target, location.In)
 		} else {
 			value, found, err = valueLocator.Value(ctx, target, location.In)
 		}
-		if found || err != nil {
+		authoritative, _ := valueLocator.(locator.AuthoritativeLocator)
+		if found || err != nil || (authoritative != nil && authoritative.Owns(location.In)) {
 			result := resolution{value: value, found: found}
 			if unwrapErr := result.unwrap(s.MetadataRequested()); unwrapErr != nil {
 				return resolution{}, errors.Join(err, unwrapErr)
@@ -309,9 +386,40 @@ type BindingError struct {
 
 func (e *BindingError) Error() string {
 	if e.Message != "" {
-		return strings.ReplaceAll(e.Message, "${error}", fmt.Sprint(e.Cause))
+		cause := e.Cause
+		var invalid *input.Error
+		if errors.As(cause, &invalid) {
+			cause = invalid.Cause
+		}
+		return strings.ReplaceAll(e.Message, "${error}", fmt.Sprint(cause))
+	}
+	var invalid *input.Error
+	if errors.As(e.Cause, &invalid) {
+		return invalid.Error()
 	}
 	return fmt.Sprintf("bind %s: %v", e.Path, e.Cause)
 }
-func (e *BindingError) Unwrap() error   { return e.Cause }
-func (e *BindingError) StatusCode() int { return e.Code }
+func (e *BindingError) Unwrap() error { return e.Cause }
+func (e *BindingError) StatusCode() int {
+	if e.Code != 0 {
+		return e.Code
+	}
+	var coder interface{ StatusCode() int }
+	if errors.As(e.Cause, &coder) {
+		return coder.StatusCode()
+	}
+	return 0
+}
+
+// Only external data-point kinds acquire client-error semantics. Internal
+// providers, defaults and transformers retain their own failure contracts.
+func (b BindingSpec) inputError(err error) error {
+	if err == nil {
+		return nil
+	}
+	switch b.Location.Kind {
+	case "query", "path", "header", "cookie", "form", "body":
+		return &input.Error{Cause: err}
+	}
+	return err
+}
