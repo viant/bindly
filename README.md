@@ -104,6 +104,24 @@ A single empty query value is present by default. Opt into treating it as absent
 with `request.WithIgnoreEmptyQueryParameters(true)` or the invocation-local
 `request.WithQueryPolicy`; repeated values retain their presence.
 
+For direct body access, `body.New` accepts raw bytes, a content type and a
+binding-name-to-JSON-field alias map. `Value` accepts the invocation context,
+target type and field name; an empty name selects the whole body:
+
+```go
+source, err := body.New(raw, "application/json", map[string]string{
+    "payload": "data",
+})
+if err != nil {
+    return err
+}
+value, found, err := source.Value(ctx, reflect.TypeFor[Payload](), "payload")
+```
+
+JSON decoding derives `Has` markers from supplied fields, including explicit
+null, zero and false. `body.WithExactFieldNames` opts into exact named-field
+lookup. `body.WithDecoders` configures custom media-type decoding.
+
 ## Cache Semantics
 
 Each `Bind` owns an invocation cache keyed by provider owner, location and target
@@ -131,7 +149,8 @@ resolved by a call. Required bindings reject missing or null values by default;
 `AllowMissingRequired` explicitly relaxes that policy.
 
 The existing `WithState[T]` / `Inject` entry point uses the same compiled-plan
-execution path. Its `WithCache`, `WithAllowedKinds`, `WithDelayedLocator` and
+execution path. `WithDynamicState` supports runtime-owned targets through `Inject`,
+`Assign` and `Value`. Its `WithCache`, `WithAllowedKinds`, `WithDelayedLocator` and
 `WithMissingPolicy` options remain available.
 
 `locator.ComposeProviders` resolves named layers in declared order. A found
@@ -181,12 +200,21 @@ without copying them into a parallel map or resource cache. Only an explicitly
 registered empty namespace is a default; named namespaces never become an
 order-dependent fallback for unqualified references.
 
+`Store.WithDefault(sourceFS)` creates a view with its own default filesystem
+while sharing named registrations with the original store. Pass that view to
+`WithResources` when compiling a component against its package-local assets.
+Changing one view's default does not change another view or the root store.
+`Lookup` and the compatibility `Filesystem` method expose registered filesystems;
+resource paths must be valid `fs.FS` paths.
+
 ## Concurrency
 
 Compiled plans, injector metadata caches, registries, resource stores, and value
 caches are safe for concurrent reads and binding after bootstrap. Invocation
 scopes should not be shared across unrelated requests. Provider implementations
-remain responsible for the concurrency safety of the data they expose.
+remain responsible for the concurrency safety of the data they expose. A
+`Replay` contains invocation values and must not be shared across requests;
+`Plan`, `Projection` and `ReplayPlan` retain contract metadata.
 
 ## Verification
 
