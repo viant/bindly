@@ -63,3 +63,14 @@ func NewInjector(options ...InjectorOption) (*Injector, error) {
 func (b *Injector) TransformerRegistry() *xform.Registry {
 	return b.transformers
 }
+
+// HasProvider reports whether a provider kind is registered in this injector's
+// lookup ancestry. It does not resolve values or confer binding authority.
+func (b *Injector) HasProvider(kind string) bool {
+	for current := b; current != nil; current = current.parent {
+		if _, ok := current.locators.Lookup(kind); ok {
+			return true
+		}
+	}
+	return false
+}

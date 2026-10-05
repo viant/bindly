@@ -54,6 +54,12 @@ Plans contain field selectors and metadata only. Provider lookup always occurs
 against the injector performing `Bind`, so one plan can safely serve sibling
 request scopes.
 
+Injector.HasProvider(kind) checks whether that exact provider kind is registered
+in the injector or its lookup ancestry, including registry parents. It does not
+execute providers or resolve values. A nil injector returns false. Registration
+visibility does not establish binding authority or reserve the registration
+against later changes.
+
 ## Bind Tags
 
 For package-defined Go shapes, Bindly can compile tags directly:
