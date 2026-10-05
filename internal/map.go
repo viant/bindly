@@ -20,10 +20,26 @@ func (m *Map[K, V]) Put(key K, value V) {
 	m.m[key] = value
 }
 
+func (m *Map[K, V]) LoadOrStore(key K, value V) (V, bool) {
+	m.mux.Lock()
+	defer m.mux.Unlock()
+	if actual, ok := m.m[key]; ok {
+		return actual, true
+	}
+	m.m[key] = value
+	return value, false
+}
+
 func (m *Map[K, V]) Delete(key K) {
 	m.mux.Lock()
 	defer m.mux.Unlock()
 	delete(m.m, key)
+}
+
+func (m *Map[K, V]) Clear() {
+	m.mux.Lock()
+	defer m.mux.Unlock()
+	clear(m.m)
 }
 
 func (m *Map[K, V]) Len() int {

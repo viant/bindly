@@ -3,11 +3,13 @@ package bindly
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"sort"
+	"sync"
+
 	"github.com/viant/bindly/locator"
 	"github.com/viant/bindly/state"
 	"github.com/viant/structology"
-	"reflect"
-	"sync"
 )
 
 // Inject binds dependencies to the target
@@ -17,10 +19,20 @@ func (c *BindingContext[T]) Inject(ctx context.Context, target *T) error {
 	if err != nil {
 		return err
 	}
-	targetState := bindingType.Type.WithValue(target)
-	for _, group := range bindingType.Bindings { //TODO add concurrency
+	return c.injectBindingType(ctx, bindingType, bindingType.Type.WithValue(target), reflect.ValueOf(target))
+}
+
+func (c *BindingContext[T]) injectBindingType(ctx context.Context, bindingType *BindingType, targetState *structology.State, targetValue reflect.Value) error {
+	for _, group := range c.orderedBindings(bindingType) { //TODO add concurrency
 		for _, binding := range group {
-			if err := c.setDestinationValue(ctx, binding, targetState); err != nil {
+			kind := binding.Kind()
+			if c.delayedKinds != nil && c.delayedKinds[kind] {
+				continue
+			}
+			if c.allowedKinds != nil && len(c.allowedKinds) > 0 && !c.allowedKinds[kind] {
+				continue
+			}
+			if err := c.setDestinationValue(ctx, binding, targetState, targetValue); err != nil {
 				return err
 			}
 		}
@@ -28,24 +40,56 @@ func (c *BindingContext[T]) Inject(ctx context.Context, target *T) error {
 	return nil
 }
 
-func (c *BindingContext[T]) setDestinationValue(ctx context.Context, binding *Binding, destState *structology.State) error {
+func (c *BindingContext[T]) orderedBindings(bindingType *BindingType) []Bindings {
+	if bindingType == nil || len(bindingType.Bindings) == 0 {
+		return nil
+	}
+	bindings := make(Bindings, 0)
+	for _, group := range bindingType.Bindings {
+		bindings = append(bindings, group...)
+	}
+	sort.SliceStable(bindings, func(i, j int) bool {
+		return c.bindingPriority(bindings[i]) < c.bindingPriority(bindings[j])
+	})
+	return groupBindings(bindings)
+}
+
+func (c *BindingContext[T]) bindingPriority(binding *Binding) int {
+	if binding == nil || binding.priority != 0 || c == nil || c.injector == nil {
+		if binding == nil {
+			return 0
+		}
+		return binding.priority
+	}
+	provider, ok := c.injector.locators.Lookup(binding.Kind())
+	if !ok || provider == nil {
+		return 0
+	}
+	return provider.Priority()
+}
+
+func (c *BindingContext[T]) setDestinationValue(ctx context.Context, binding *Binding, destState *structology.State, targetValue reflect.Value) error {
 	value, ok, err := c.sourceValue(ctx, binding)
 	if err != nil {
 		return err
 	}
 	if ok {
 
-		if err := destState.SetValue(binding.selector.Path(), value); err != nil {
-			return err
+		if binding.selector != nil {
+			if err := destState.SetValue(binding.selector.Path(), value); err != nil {
+				return err
+			}
+			return nil
 		}
+		return binding.setReflectValue(targetValue, value)
 	}
 	return nil
 }
 
 func (c *BindingContext[T]) Value(ctx context.Context, location *state.Location) (interface{}, bool, error) {
-	locator, ok := c.injector.locators.Get(location.Kind)
+	locator, ok := c.injector.locators.Lookup(location.Kind)
 	if !ok {
-		return nil, false, fmt.Errorf("failed to lookup locator for: %v", location.Kind)
+		return nil, false, nil
 	}
 	aLocator := locator.Locate(c.state)
 	if aLocator == nil {
@@ -54,73 +98,96 @@ func (c *BindingContext[T]) Value(ctx context.Context, location *state.Location)
 	return c.value(ctx, location, aLocator)
 }
 
-func (c *BindingContext[T]) value(ctx context.Context, location *state.Location, locator locator.Locator) (interface{}, bool, error) {
-	return locator.Value(ctx, location.In)
+func (c *BindingContext[T]) value(ctx context.Context, location *state.Location, source locator.Locator) (interface{}, bool, error) {
+	if scoped, ok := source.(locator.ScopedLocator); ok {
+		return scoped.ValueInScope(ctx, c, nil, location.In)
+	}
+	return source.Value(ctx, nil, location.In)
 }
 
 func (c *BindingContext[T]) sourceValue(ctx context.Context, binding *Binding) (interface{}, bool, error) {
-	isCacheable := binding.cachable && c.valueCache != nil
-	aPath := binding.selector.Path()
+	provider, ok := c.injector.locators.Lookup(binding.Kind())
+	if !ok {
+		return nil, false, fmt.Errorf("failed to lookup locator provider for: %v", binding.location)
+	}
+	isCacheable := binding.cacheEnabled(provider) && c.valueCache != nil
+	cacheKey := binding.cacheKey()
 	var locker sync.Locker
 	if isCacheable {
-		prev, ok := c.valueCache.Get(aPath)
+		prev, ok := c.valueCache.Get(cacheKey)
 		if ok {
 			return prev, true, nil
 		}
-		locker = c.valueCache.lock(aPath)
+		locker = c.valueCache.lock(cacheKey)
 		locker.Lock()
 		defer locker.Unlock()
+		if prev, ok := c.valueCache.Get(cacheKey); ok {
+			return prev, true, nil
+		}
 	}
-	aLocator := binding.provider.Locate(c.state)
+	aLocator := provider.Locate(c.state)
 	if aLocator == nil {
+		if c.state == nil {
+			return nil, false, fmt.Errorf("binding provider %q requires source state; use WithSource", binding.Kind())
+		}
 		return nil, false, fmt.Errorf("failed to locate: %v", binding.location)
 	}
-	value, ok, err := c.value(ctx, binding.location, aLocator)
+	value, ok, err := c.locatorValue(ctx, aLocator, binding.providerType(), binding.location.In)
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to locate: %v, %w", binding.location, err)
+		return nil, false, newBindingError(binding, fmt.Errorf("failed to locate %v: %w", binding.location, err))
 	}
 	if !ok {
-		if binding.defaultValue != nil {
-			value = binding.defaultValue
+		if binding.DefaultValue != nil {
+			value = binding.DefaultValue
 			ok = true
 		}
 	}
 	if !ok {
-		if binding.required {
-			return nil, false, fmt.Errorf("required value not found: %+v", binding.location)
+		// honor strictMissing policy for Required bindings
+		if c.strictMissing && binding.IsRequired() {
+			return nil, false, newBindingError(binding, fmt.Errorf("missing required %s value %q", binding.Kind(), binding.In()))
 		}
 		return nil, false, nil
-	}
-
-	value, err = c.adjustValue(binding.selector, value)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to adjust value: %v, %w", binding.location, err)
 	}
 
 	if binding.transformer != nil {
 		transformed, err := binding.transformer.Transform(ctx, c, value)
 		if err != nil {
-			return nil, false, fmt.Errorf("failed to transform value: %v, %w", binding.location, err)
+			return nil, false, newBindingError(binding, fmt.Errorf("failed to transform value %v: %w", binding.location, err))
 		}
 		value = transformed
 	}
+	value, err = convertValue(binding.destinationType(), value)
+	if err != nil {
+		return nil, false, newBindingError(binding, fmt.Errorf("failed to convert value %v: %w", binding.location, err))
+	}
 
 	/*TODO
-		- add option for traversing resolved dependency for its own binding
-		- add option for creating dependency struct on demand  (with or without singlton option)
+	- add option for traversing resolved dependency for its own binding
+	- add option for creating dependency struct on demand  (with or without singlton option)
 	*/
 
 	if isCacheable && ok {
-		c.valueCache.Put(aPath, value)
+		c.valueCache.Put(cacheKey, value)
 	}
 	return value, ok, nil
 }
 
+func (c *BindingContext[T]) locatorValue(ctx context.Context, source locator.Locator, targetType reflect.Type, name string) (interface{}, bool, error) {
+	if scoped, ok := source.(locator.ScopedLocator); ok {
+		return scoped.ValueInScope(ctx, c, targetType, name)
+	}
+	return source.Value(ctx, targetType, name)
+}
+
 func (c *BindingContext[T]) getBindingType(ctx context.Context, targetType reflect.Type) (*BindingType, error) {
+	targetType, err := planTargetType(targetType)
+	if err != nil {
+		return nil, err
+	}
 	bindingType, ok := c.injector.bindingCache.Get(targetType)
 	if !ok {
-		var err error
-		sType := structology.NewStateType(targetType)
+		sType := c.injector.stateType(targetType)
 		if bindingType, err = c.injector.buildBindings(ctx, sType); err != nil {
 			return nil, err
 		}
@@ -129,164 +196,6 @@ func (c *BindingContext[T]) getBindingType(ctx context.Context, targetType refle
 	return bindingType, nil
 }
 
-// adjustValue ensures type compatibility between the selector and value
 func (c *BindingContext[T]) adjustValue(selector *structology.Selector, value interface{}) (interface{}, error) {
-	if value == nil {
-		return nil, nil
-	}
-
-	selectorType := selector.Type()
-	valueType := reflect.TypeOf(value)
-
-	// If types are already compatible, return as is
-	if valueType.AssignableTo(selectorType) {
-		return value, nil
-	}
-
-	// Handle special case: pointer vs. non-pointer
-	if selectorType.Kind() == reflect.Ptr && valueType.Kind() != reflect.Ptr {
-		// Need to convert non-pointer value to pointer
-		if !valueType.AssignableTo(selectorType.Elem()) {
-			return nil, fmt.Errorf("incompatible types: selector expects %v but got %v", selectorType, valueType)
-		}
-		valueReflect := reflect.ValueOf(value)
-		ptrValue := reflect.New(valueType)
-		ptrValue.Elem().Set(valueReflect)
-		return ptrValue.Interface(), nil
-	}
-
-	// If selector is expecting non-pointer but got a pointer, dereference
-	if selectorType.Kind() != reflect.Ptr && valueType.Kind() == reflect.Ptr {
-		if !valueType.Elem().AssignableTo(selectorType) {
-			return nil, fmt.Errorf("incompatible types: selector expects %v but got %v", selectorType, valueType)
-		}
-		valueReflect := reflect.ValueOf(value)
-		if valueReflect.IsNil() {
-			// Handle nil pointer case by creating a zero value
-			return reflect.Zero(selectorType).Interface(), nil
-		}
-		return valueReflect.Elem().Interface(), nil
-	}
-
-	// Handle slice conversions
-	if selectorType.Kind() == reflect.Slice && valueType.Kind() == reflect.Slice {
-		return c.adjustSliceValue(selectorType, value)
-	}
-
-	// For any other incompatible types
-	return nil, fmt.Errorf("incompatible types: selector expects %v but got %v", selectorType, valueType)
-}
-
-// adjustSliceValue handles conversion between different slice types
-func (c *BindingContext[T]) adjustSliceValue(selectorType reflect.Type, value interface{}) (interface{}, error) {
-	valueSlice := reflect.ValueOf(value)
-	length := valueSlice.Len()
-	elemType := selectorType.Elem()
-
-	// Create a new slice of the target type
-	resultSlice := reflect.MakeSlice(selectorType, length, length)
-
-	// Convert each element
-	for i := 0; i < length; i++ {
-		elem := valueSlice.Index(i).Interface()
-
-		// Recursively adjust each element
-		adjustedElem, err := c.adjustElementValue(elemType, elem)
-		if err != nil {
-			return nil, fmt.Errorf("error converting slice element at index %d: %w", i, err)
-		}
-
-		resultSlice.Index(i).Set(reflect.ValueOf(adjustedElem))
-	}
-
-	return resultSlice.Interface(), nil
-}
-
-// adjustElementValue adjusts a single element to match the target type
-func (c *BindingContext[T]) adjustElementValue(targetType reflect.Type, value interface{}) (interface{}, error) {
-	if value == nil {
-		return reflect.Zero(targetType).Interface(), nil
-	}
-
-	valueType := reflect.TypeOf(value)
-	valueReflect := reflect.ValueOf(value)
-
-	// Direct assignment if compatible
-	if valueType.AssignableTo(targetType) {
-		return value, nil
-	}
-
-	// Handle pointer vs. non-pointer
-	if targetType.Kind() == reflect.Ptr && valueType.Kind() != reflect.Ptr {
-		if !valueType.AssignableTo(targetType.Elem()) {
-			return nil, fmt.Errorf("incompatible element types: target expects %v but got %v", targetType, valueType)
-		}
-		ptrValue := reflect.New(valueType)
-		ptrValue.Elem().Set(valueReflect)
-		return ptrValue.Interface(), nil
-	}
-
-	if targetType.Kind() != reflect.Ptr && valueType.Kind() == reflect.Ptr {
-		if !valueType.Elem().AssignableTo(targetType) {
-			return nil, fmt.Errorf("incompatible element types: target expects %v but got %v", targetType, valueType)
-		}
-		if valueReflect.IsNil() {
-			return reflect.Zero(targetType).Interface(), nil
-		}
-		return valueReflect.Elem().Interface(), nil
-	}
-
-	// Try basic numeric conversions
-	if isNumericType(targetType) && isNumericType(valueType) {
-		return convertNumeric(targetType, valueReflect)
-	}
-
-	// Handle string conversion if possible
-	if targetType.Kind() == reflect.String {
-		return fmt.Sprintf("%v", value), nil
-	}
-
-	return nil, fmt.Errorf("incompatible element types: target expects %v but got %v", targetType, valueType)
-}
-
-// isNumericType checks if a type is numeric (int, float, etc.)
-func isNumericType(t reflect.Type) bool {
-	switch t.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-		reflect.Float32, reflect.Float64:
-		return true
-	}
-	return false
-}
-
-// convertNumeric converts between numeric types
-func convertNumeric(targetType reflect.Type, value reflect.Value) (interface{}, error) {
-	var floatVal float64
-
-	// Extract float value regardless of original type
-	switch value.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		floatVal = float64(value.Int())
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		floatVal = float64(value.Uint())
-	case reflect.Float32, reflect.Float64:
-		floatVal = value.Float()
-	default:
-		return nil, fmt.Errorf("not a numeric type: %v", value.Type())
-	}
-
-	// Convert to target type
-	switch targetType.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return int64(floatVal), nil
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return uint64(floatVal), nil
-	case reflect.Float32:
-		return float32(floatVal), nil
-	case reflect.Float64:
-		return floatVal, nil
-	default:
-		return nil, fmt.Errorf("target is not a numeric type: %v", targetType)
-	}
+	return convertValue(selector.Type(), value)
 }

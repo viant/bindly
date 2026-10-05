@@ -12,7 +12,6 @@ type Type struct {
 
 	CompiledType  *ReflectType
 	GeneratedType *ReflectType // created by reflect.StructOf
-	Embedder      Embedder     // if type has dependency on fs embedder
 }
 
 func (t *Type) Type() reflect.Type {
@@ -72,9 +71,8 @@ type MapType struct {
 }
 
 type StructType struct {
-	Method   []reflect.Method
-	Field    []Field
-	Embedder // if needed
+	Method []reflect.Method
+	Field  []Field
 }
 
 // ----------------------------------------------------------------------------
@@ -150,9 +148,8 @@ func toReflectType(rType reflect.Type) *ReflectType {
 	case reflect.Struct:
 		// Wrap struct fields and methods
 		rt.StructType = &StructType{
-			Field:    makeStructFields(rType),
-			Method:   makeStructMethods(rType),
-			Embedder: nil, // or handle as needed
+			Field:  makeStructFields(rType),
+			Method: makeStructMethods(rType),
 		}
 	case reflect.Ptr:
 		rt = toReflectType(rType.Elem())

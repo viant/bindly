@@ -20,7 +20,7 @@ type (
 	}
 )
 
-func (l *directLocator) Value(ctx context.Context, name string) (interface{}, bool, error) {
+func (l *directLocator) Value(ctx context.Context, _ reflect.Type, name string) (interface{}, bool, error) {
 	value, err := l.state.Value(name)
 	if err != nil {
 		// The field doesn't exist

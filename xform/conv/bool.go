@@ -2,12 +2,13 @@ package conv
 
 import (
 	"context"
-	"embed"
 	"fmt"
+	"reflect"
+
 	"github.com/viant/bindly/locator"
+	"github.com/viant/bindly/resource"
 	"github.com/viant/bindly/xform"
 	"github.com/viant/tagly/tags"
-	"reflect"
 )
 
 // BoolTransformer converts compatible values to bool
@@ -41,12 +42,12 @@ func (t *BoolTransformer) Transform(ctx context.Context, resolver locator.Resolv
 }
 
 // NewBoolTransformer creates a new bool transformer
-func NewBoolTransformer(ctx context.Context, config tags.Values, destType reflect.Type, embedFS *embed.FS) (xform.Transformer, error) {
+func NewBoolTransformer(ctx context.Context, config tags.Values, destType reflect.Type, resources *resource.Store) (xform.Transformer, error) {
 	if destType.Kind() != reflect.Bool {
 		return nil, fmt.Errorf("BoolTransformer can only be used with bool destination type, got %v", destType)
 	}
 
 	return &BoolTransformer{
-		TransformerBase: xform.NewTransformerBase("bool", destType, config, embedFS),
+		TransformerBase: xform.NewTransformerBase("bool", destType, config, resources),
 	}, nil
 }

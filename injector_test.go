@@ -2,12 +2,13 @@ package bindly_test
 
 import (
 	"context"
+	"strings"
+	"testing"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/viant/bindly"
 	"github.com/viant/bindly/locator/buildin"
 	"github.com/viant/structology"
-	"strings"
-	"testing"
 )
 
 type ICounter interface {
@@ -67,7 +68,6 @@ func TestInjector_Inject(t *testing.T) {
 		},
 	}
 	type Foo struct {
-		ID      int
 		Bar     *Bar `bind:"kind=instance,in=bar"`
 		Counter ICounter
 		Key1    string `bind:"kind=state,in=Session.Key1"`
@@ -79,11 +79,24 @@ func TestInjector_Inject(t *testing.T) {
 		buildin.Map("instance", "Instances", 1),
 		buildin.Map("interface", "Interfaces", 1)))
 
-	injector := bindly.NewInjector(opts...)
-	err := bindly.WithState[Foo](injector, dependencies).Inject(context.Background(), foo)
-	if err != nil {
-		return
-	}
-	assert.Nil(t, err)
+	injector, err := bindly.NewInjector(opts...)
+	assert.NoError(t, err)
+	err = bindly.WithState[Foo](injector, dependencies).Inject(context.Background(), foo)
 
+	assert.NoError(t, err)
+
+	// verify that scalar state and instance bindings were injected
+	assert.Equal(t, "abc", foo.Key1) // explicit state binding via tag
+	if assert.NotNil(t, foo.Bar) {   // instance binding from Instances["bar"]
+		assert.Equal(t, "attr1", foo.Bar.Attr1)
+	}
+
+	// verify that interface binding resolved to the configured Counter instance
+	if assert.NotNil(t, foo.Counter) {
+		foo.Counter.Inc()
+		concrete, ok := foo.Counter.(*Counter)
+		if assert.True(t, ok, "expected *Counter implementation") {
+			assert.Equal(t, 1, concrete.count)
+		}
+	}
 }

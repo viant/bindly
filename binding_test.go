@@ -63,9 +63,13 @@ func Example_inject() {
 		buildin.Map("setting", "Settings", 1),
 		buildin.Map("interface", "Interfaces", 1)))
 
-	injector := bindly.NewInjector(opts...)
+	injector, err := bindly.NewInjector(opts...)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 	service := &Service{}
-	err := bindly.WithState[Service](injector, dependencies).Inject(context.Background(), service)
+	err = bindly.WithState[Service](injector, dependencies).Inject(context.Background(), service)
 
 	fmt.Println(service, err)
 }

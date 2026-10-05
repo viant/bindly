@@ -2,12 +2,13 @@ package conv
 
 import (
 	"context"
-	"embed"
 	"fmt"
+	"reflect"
+
 	"github.com/viant/bindly/locator"
+	"github.com/viant/bindly/resource"
 	"github.com/viant/bindly/xform"
 	"github.com/viant/tagly/tags"
-	"reflect"
 )
 
 // StringTransformer converts any value to a string
@@ -34,11 +35,11 @@ func (t *StringTransformer) Transform(ctx context.Context, resolver locator.Reso
 }
 
 // NewStringTransformer creates a new string transformer
-func NewStringTransformer(ctx context.Context, config tags.Values, destType reflect.Type, embedFS *embed.FS) (xform.Transformer, error) {
+func NewStringTransformer(ctx context.Context, config tags.Values, destType reflect.Type, resources *resource.Store) (xform.Transformer, error) {
 	if destType.Kind() != reflect.String {
 		return nil, fmt.Errorf("StringTransformer can only be used with string destination type, got %v", destType)
 	}
 	return &StringTransformer{
-		TransformerBase: xform.NewTransformerBase("string", destType, config, embedFS),
+		TransformerBase: xform.NewTransformerBase("string", destType, config, resources),
 	}, nil
 }

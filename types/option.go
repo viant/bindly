@@ -13,9 +13,3 @@ func WithPackage(pkg string) Option {
 		p.Package = pkg
 	}
 }
-
-func WithEmbedder(e Embedder) Option {
-	return func(p *Type) {
-		p.Embedder = e
-	}
-}

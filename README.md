@@ -1,197 +1,151 @@
-Bindaly - Golang Dependency Injection
+# Bindly
 
-[![GoReportCard](https://goreportcard.com/badge/github.com/viant/binder)](https://goreportcard.com/report/github.com/viant/binder)
-[![GoDoc](https://godoc.org/github.com/viant/binder?status.svg)](https://godoc.org/github.com/viant/binder)
+Bindly is a provider-driven dependency injector for Go structs. It compiles
+binding metadata once, then resolves values from an invocation scope without
+capturing request data in the compiled plan.
 
-Bindaly is a powerful, flexible dependency injection library for Go that helps manage application component dependencies with minimal boilerplate and maximal type safety.
+## Core Model
 
-## Introduction
+- An application `Injector` owns provider definitions, transformers, type
+  metadata, and generic resources.
+- `CompilePlan` converts component metadata into an immutable reusable plan.
+- `ForScope` creates an invocation injector. Local providers shadow parent
+  providers by kind and the scope owns its value cache.
+- `Bind` resolves each binding from the active scope, transforms and converts
+  the value, and writes it to the typed target.
 
-Bindaly provides a straightforward way to inject dependencies into Go structs using struct tags. It works with generic types to provide both flexibility and type safety, and supports caching, transformations, and complex dependency graphs.
+```go
+root, err := bindly.NewInjector(bindly.WithProviders(appProviders...))
+if err != nil {
+    return err
+}
 
-## Features
+plan, err := root.CompilePlan(reflect.TypeOf(Input{}),
+    bindly.BindingSpec{
+        Path:     "AccountID",
+        Name:     "accountID",
+        Location: state.Location{Kind: request.QueryKind, In: "accountId"},
+    },
+)
+if err != nil {
+    return err
+}
 
-- Type-safe dependency injection with generics
-- Annotation-based binding with struct tags
-- Value transformations via custom transformers
-- Intelligent type conversion between compatible types
-- Value caching for performance optimization
-- Fully concurrent-safe operations
-- Extensible architecture with custom providers and locators
+requestScope, err := request.New(req,
+    request.WithPathParams(pathParams),
+)
+if err != nil {
+    return err
+}
+defer requestScope.Close()
 
-## Installation
+scope, err := root.ForScope(requestScope.Providers()...)
+if err != nil {
+    return err
+}
+
+input := &Input{}
+if err := scope.Bind(ctx, input, bindly.WithPlan(plan)); err != nil {
+    return err
+}
+```
+
+Plans contain field selectors and metadata only. Provider lookup always occurs
+against the injector performing `Bind`, so one plan can safely serve sibling
+request scopes.
+
+## Bind Tags
+
+For package-defined Go shapes, Bindly can compile tags directly:
+
+```go
+type Input struct {
+    AccountID int           `bind:"accountID,kind=query,in=accountId,required"`
+    IDs       []int         `bind:"ids,kind=query,in=id"`
+    Request   *http.Request `bind:"request,kind=http_request"`
+}
+```
+
+The `bind` tag carries the original Datly parameter-tag surface: positional or
+explicit name, `kind`, `in`, `when`, `scope`, `errorCode`, `errorMessage`,
+`dataType`, `cardinality`, `with`, `required`, `cacheable`, `async`, `uri`,
+`resource`, and `value`. The complete `reflect.StructTag` remains available as
+binding metadata, so independent tags such as codec, predicate, description,
+and format are not flattened into Bindly-specific fields.
+
+Datly-generated or DQL-defined components should use `BindingSpec` and
+`CompilePlan`; they should not synthesize tags and parse them again.
+
+## Request Providers
+
+`provider/request` groups HTTP-related providers as one package while keeping
+their data points independent:
+
+- `http_request`
+- `query`
+- `path`
+- `header`
+- `cookie`
+- `form`
+- `body`
+
+Query, header, form, and multipart providers use the destination type: scalar
+destinations receive the first repeated value, while slice and array
+destinations receive every value. Untyped provider lookup also preserves every
+repeated value. Form and body can both resolve typed multipart values and file
+headers, matching Datly parameter semantics. The body provider also supports
+JSON, named JSON fields, raw bytes or strings, and custom media-type decoders.
+`Scope.Close` removes multipart temporary files.
+
+## Cache Semantics
+
+The value cache is invocation-scoped and keyed by logical binding name, matching
+Datly parameter shadowing semantics. A binding-level `cacheable` value overrides
+the provider's `locator.CachePolicy`; providers without a policy default to
+non-cacheable. Cacheable values use per-name single-flight locking and are
+rechecked after lock acquisition.
+
+`ValueCache` is not a response cache or persistent storage mechanism.
+
+## Embedded Resources
+
+Bindly accepts any standard `fs.FS`, including `go:embed`:
+
+```go
+//go:embed sql/*.sql
+var assets embed.FS
+
+injector, err := bindly.NewInjector(
+    bindly.WithResourceFS("component", assets),
+)
+sqlText, err := injector.ReadResource("component:sql/find.sql")
+embeddedFS, ok := injector.ResourceFS("component")
+```
+
+`ResourceFS` returns the original `fs.FS`, so an `embed.FS` remains available
+to SQL URI, StructQL, or other resource-aware compilers. Transformers receive
+the same generic resource store. Bindly does not infer
+resource type from paths or parse resources with regular-expression heuristics.
+
+`injector.Resources()` exposes that same store for registration-time compilers.
+Passing it as an `fs.FS` lets SQL URI and StructQL owners read package assets
+without copying them into a parallel map or resource cache. Only an explicitly
+registered empty namespace is a default; named namespaces never become an
+order-dependent fallback for unqualified references.
+
+## Concurrency
+
+Compiled plans, injector metadata caches, registries, resource stores, and value
+caches are safe for concurrent reads and binding after bootstrap. Invocation
+scopes should not be shared across unrelated requests. Provider implementations
+remain responsible for the concurrency safety of the data they expose.
+
+## Verification
+
+This module targets Go 1.23.1. Run:
 
 ```bash
-go get github.com/viant/binder
+GOTOOLCHAIN=go1.23.1 go test ./...
+GOTOOLCHAIN=go1.23.1 go test -race ./...
+GOTOOLCHAIN=go1.23.1 go vet ./...
 ```
-
-## Usage
-
-### Basic Example
-
-```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"github.com/viant/bindly"
-	"github.com/viant/bindly/locator/buildin"
-	"github.com/viant/structology"
-)
-
-type AppConfig struct {
-	ServerPort int
-	BaseURL    string
-}
-
-// Logger is a simple logging service
-type Logger interface {
-	Log(message string)
-}
-
-// SimpleLogger implements Logger
-type SimpleLogger struct{}
-
-func (l *SimpleLogger) Log(message string) {
-	fmt.Println(message)
-}
-
-type DependencySetup struct {
-	Config     *AppConfig
-	Settings   map[string]interface{}
-	Interfaces map[string]interface{}
-}
-
-// Service uses the configuration
-type Service struct {
-	Debug      bool   `bind:"kind=setting,in=debug"`
-	ServerPort int    `bind:"in=Config.ServerPort"` //state kind is a default kind
-	Logger     Logger //interface bind by default to interface kind
-}
-
-func main() {
-
-	var iLogger Logger
-	appLoger := &SimpleLogger{}
-
-	setup := &DependencySetup{
-		Config: &AppConfig{
-			ServerPort: 8080,
-			BaseURL:    "http://localhost:8080",
-		},
-
-		Interfaces: map[string]interface{}{
-			structology.InterfaceTypeOf(&iLogger).String(): appLoger,
-		},
-		Settings: map[string]interface{}{
-			"debug": true,
-			"port":  8080,
-		},
-	}
-
-	var opts = append([]bindly.InjectorOption{}, bindly.WithProviders(
-		buildin.Struct("state", "", 1),
-		buildin.Map("setting", "Settings", 1),
-		buildin.Map("interface", "Interfaces", 1)))
-
-	injector := bindly.NewInjector(opts...)
-	service := &Service{}
-	err := bindly.WithState[Service](injector, setup).Inject(context.Background(), service)
-	fmt.Println(service, err)
-}
-
-```
-
-### Binding with Tags
-
-Bindaly uses struct tags to define dependencies:
-
-```go
-type MyStruct struct {
-    // Inject from state with key "config.port"
-    Port int `bind:"in=config.port"`
-    
-    // Inject from a specific provider kind
-    Database *Database `bind:"kind=database,in=primary"`
-    
-    // Cache the resolved value
-    ExpensiveData []Item `bind:"kind=service,in=data,cacheable"`
-    
-    // Transform values during injection
-    ConfigValue string `bind:"in=rawValue" xform:"string"`
-}
-```
-
-### Value Transformers
-
-Transformers convert values during injection:
-
-```go
-// Register custom transformers
-transformerRegistry := xform.NewRegistry()
-xform.conv.Init(transformerRegistry)  // Initialize standard converters
-transformerRegistry.Register("custom", xform.NewTransformerFactory("custom", NewCustomTransformer))
-
-injector := bindly.New(
-    bindly.WithTransformers(transformerRegistry),
-)
-```
-
-## Advanced Features
-
-### Caching Values
-
-```go
-// Create a value cache
-cache := bindly.NewValueCache()
-
-// Use cache with binding context
-bindingCtx := bindly.WithState[MyService](
-    injector, 
-    state,
-    bindly.WithCache[MyService](cache),
-)
-
-// Save cache to disk
-err := cache.Save(ctx, "/path/to/cache.bin")
-
-// Load cache from disk
-err := cache.Load(ctx, "/path/to/cache.bin")
-```
-
-### Custom Providers
-
-```go
-// Implement custom provider
-type MyProvider struct {
-    // provider implementation
-}
-
-func (p *MyProvider) Locate(state *structology.State) locator.Locator {
-    // Return appropriate locator based on state
-}
-
-// Register provider
-injector := bindly.New(
-    bindly.WithProviders(&MyProvider{}),
-)
-```
-
-## Performance Considerations
-
-- Use `cacheable` for expensive operations
-- Prefer direct binding over transformations when possible
-- Consider pre-building binding types for frequently used structs
-
-## Thread Safety
-
-The binder library is designed to be fully thread-safe. All caching operations use appropriate locking mechanisms to ensure safe concurrent access.
-
-## License
-
-The source code is made available under the terms of the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for more details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.

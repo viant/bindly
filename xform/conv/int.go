@@ -2,12 +2,13 @@ package conv
 
 import (
 	"context"
-	"embed"
 	"fmt"
+	"reflect"
+
 	"github.com/viant/bindly/locator"
+	"github.com/viant/bindly/resource"
 	"github.com/viant/bindly/xform"
 	"github.com/viant/tagly/tags"
-	"reflect"
 )
 
 // IntTransformer converts compatible values to int
@@ -44,11 +45,11 @@ func (t *IntTransformer) Transform(ctx context.Context, resolver locator.Resolve
 }
 
 // NewIntTransformer creates a new int transformer
-func NewIntTransformer(ctx context.Context, config tags.Values, destType reflect.Type, embedFS *embed.FS) (xform.Transformer, error) {
+func NewIntTransformer(ctx context.Context, config tags.Values, destType reflect.Type, resources *resource.Store) (xform.Transformer, error) {
 	if destType.Kind() != reflect.Int && destType.Kind() != reflect.Int32 && destType.Kind() != reflect.Int64 {
 		return nil, fmt.Errorf("IntTransformer can only be used with int destination types, got %v", destType)
 	}
 	return &IntTransformer{
-		TransformerBase: xform.NewTransformerBase("int", destType, config, embedFS),
+		TransformerBase: xform.NewTransformerBase("int", destType, config, resources),
 	}, nil
 }
