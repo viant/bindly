@@ -884,6 +884,8 @@ github.com/viant/toolbox v0.34.6-0.20221112031702-3e7cdde7f888 h1:iQ9ehV+Qev9s/L
 github.com/viant/toolbox v0.34.6-0.20221112031702-3e7cdde7f888/go.mod h1:OxMCG57V0PXuIP2HNQrtJf2CjqdmbrOx5EkMILuUhzM=
 github.com/viant/x v0.4.1-0.20260913213625-0705ff85c430 h1:6xemxAnJycmoV6569XpEVWQOawGw5W9WrIx/e7scRjk=
 github.com/viant/x v0.4.1-0.20260913213625-0705ff85c430/go.mod h1:j+JrJV0wW8iI5v3J6IBw7VTmhUd66y2ePN2ETyaPCpM=
+github.com/viant/x v0.5.1-0.20260915043005-1bc42b9eef47 h1:VNpyUuP4Dg0FZ+C7+aAXXDbi+DDu2fSLwbemxu+/gjM=
+github.com/viant/x v0.5.1-0.20260915043005-1bc42b9eef47/go.mod h1:Ud4v5LGA8uA0EfmuO4H0t0YgAq2FNLnh3ydQUjBdaLI=
 github.com/viant/xreflect v0.0.0-20230303201326-f50afb0feb0d h1:zMKhSRx3xy89QlYcbjV3cgR98SlHnA8cGaBQJgmMeWE=
 github.com/viant/xreflect v0.0.0-20230303201326-f50afb0feb0d/go.mod h1:uflXFHcw4TQXgYJvTQ7Akf4SAzXYPCVi8NGZgsVlwmA=
 github.com/viant/xreflect v0.7.3/go.mod h1:BwI+lqFjhKv2Vn4E0Jt6nvbwcFOWrM6H+sOMOX3JiU4=

@@ -31,3 +31,10 @@ type AuthoritativeLocator interface{ Owns(string) bool }
 type SourceCapturer interface {
 	CaptureSource(context.Context, reflect.Type, string) (any, bool, error)
 }
+
+// BodyNullPolicyLocator recognizes body null in its native source decoder.
+// The policy is invocation-local: implementations must never mutate a provider
+// or treat an arbitrary provider's nil value as evidence of JSON literal null.
+type BodyNullPolicyLocator interface {
+	ValueWithBodyNullPolicy(context.Context, reflect.Type, string, string) (any, bool, error)
+}

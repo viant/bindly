@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/viant/bindly/input"
+	"github.com/viant/bindly/internal/bodyjson"
 	"mime"
 	"mime/multipart"
 	"reflect"
@@ -17,6 +18,7 @@ import (
 )
 
 type Source struct {
+	deferred  *deferredSource
 	raw       []byte
 	mediaType string
 	exact     bool
@@ -47,13 +49,36 @@ func (s *Source) Kind() string                              { return "body" }
 func (s *Source) Priority() int                             { return 0 }
 func (s *Source) DefaultCacheable() bool                    { return true }
 func (s *Source) Locate(*structology.State) locator.Locator { return s }
-func (s *Source) Value(_ context.Context, target reflect.Type, name string) (any, bool, error) {
+func (s *Source) Value(ctx context.Context, target reflect.Type, name string) (any, bool, error) {
+	return s.ValueWithBodyNullPolicy(ctx, target, name, "")
+}
+
+// ValueWithBodyNullPolicy applies only this binding's whole JSON null policy.
+func (s *Source) ValueWithBodyNullPolicy(ctx context.Context, target reflect.Type, name, policy string) (any, bool, error) {
+	if policy != "" {
+		if policy != "empty-record" || name != "" || target == nil || target.Kind() != reflect.Pointer || target.Elem().Kind() != reflect.Struct {
+			return nil, false, &input.Error{Cause: fmt.Errorf("invalid whole-body null policy %q for %v/%q", policy, target, name)}
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+	}
+	if s != nil && s.deferred != nil {
+		resolved, err := s.resolve(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		return resolved.ValueWithBodyNullPolicy(ctx, target, name, policy)
+	}
 	if s == nil {
 		return nil, false, nil
 	}
 	raw := s.raw
 	if alias, ok := s.aliases[name]; ok {
 		name = alias
+	}
+	if policy != "" && name != "" {
+		return nil, false, &input.Error{Cause: fmt.Errorf("bodyNullPolicy cannot select an aliased named body field")}
 	}
 	if strings.HasPrefix(s.mediaType, "multipart/") {
 		value, found := MultipartValue(s.multipart, target, name)
@@ -88,6 +113,14 @@ func (s *Source) Value(_ context.Context, target reflect.Type, name string) (any
 			}
 		}
 		if strings.TrimSpace(string(raw)) == "null" {
+			if policy == "empty-record" {
+				var literal json.RawMessage
+				if err := json.Unmarshal(raw, &literal); err != nil {
+					return nil, true, &input.Error{Cause: err}
+				}
+				value, err := NewEmptyRecord(target)
+				return value, true, err
+			}
 			return nil, true, nil
 		}
 		if target == nil {
@@ -101,6 +134,15 @@ func (s *Source) Value(_ context.Context, target reflect.Type, name string) (any
 		if target == reflect.TypeOf(json.RawMessage{}) {
 			return append(json.RawMessage(nil), raw...), true, nil
 		}
+		if _, found := s.decoders.Lookup(s.mediaType); !found {
+			value, err := bodyjson.DecodePublic(raw, target)
+			return value, true, err
+		}
+		filtered, err := bodyjson.FilterPublic(raw, target)
+		if err != nil {
+			return nil, true, &input.Error{Cause: err}
+		}
+		raw = filtered
 		value := reflect.New(target)
 		decode := json.Unmarshal
 		if decoder, found := s.decoders.Lookup(s.mediaType); found {
@@ -161,4 +203,18 @@ func (s *Source) Value(_ context.Context, target reflect.Type, name string) (any
 		return nil, true, &input.Error{Cause: err}
 	}
 	return value, true, nil
+}
+
+// NewEmptyRecord allocates a detached direct *struct and initializes native
+// original-presence holders without marking any business field as supplied.
+// Callers normalizing typed input must independently prove explicit presence.
+func NewEmptyRecord(target reflect.Type) (any, error) {
+	if target == nil || target.Kind() != reflect.Pointer || target.Elem().Kind() != reflect.Struct {
+		return nil, fmt.Errorf("empty record requires a direct pointer-to-struct target")
+	}
+	value := reflect.New(target.Elem())
+	if err := (&Source{}).markPresence(value, json.RawMessage(`{}`)); err != nil {
+		return nil, err
+	}
+	return value.Interface(), nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/viant/bindly/internal/bodyjson"
 	"github.com/viant/bindly/provider/body"
 	"github.com/viant/bindly/xform/conv"
 	"reflect"
@@ -103,7 +104,7 @@ func (r *Replay) source(ctx context.Context, binding BindingSpec, target reflect
 	if err != nil {
 		return resolution{}, err
 	}
-	value, found, err := decoder.Value(ctx, target, "")
+	value, found, err := decoder.ValueWithBodyNullPolicy(ctx, target, "", binding.BodyNullPolicy)
 	return resolution{value: value, found: found}, err
 }
 func (r *Replay) encodeField(binding BindingSpec, value any) ([]byte, error) {
@@ -119,11 +120,7 @@ func (r *Replay) encodeField(binding BindingSpec, value any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	decoder, err := body.New(data, "application/json", nil)
-	if err != nil {
-		return nil, err
-	}
-	decoded, _, err := decoder.Value(context.Background(), r.plan.plan.fields[binding.Path].Type, "")
+	decoded, err := bodyjson.VerifyTypedRoundtrip(data, r.plan.plan.fields[binding.Path].Type)
 	if err != nil {
 		return nil, err
 	}

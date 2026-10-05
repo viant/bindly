@@ -14,6 +14,13 @@ func (s *Source) CaptureSource(ctx context.Context, target reflect.Type, name st
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
+	if s != nil && s.deferred != nil {
+		resolved, err := s.resolve(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		return resolved.CaptureSource(ctx, target, name)
+	}
 	if s != nil && (s.mediaType == "" || s.mediaType == "application/json" || strings.HasSuffix(s.mediaType, "+json")) {
 		target = reflect.TypeFor[json.RawMessage]()
 	}

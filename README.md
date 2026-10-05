@@ -122,6 +122,35 @@ JSON decoding derives `Has` markers from supplied fields, including explicit
 null, zero and false. `body.WithExactFieldNames` opts into exact named-field
 lookup. `body.WithDecoders` configures custom media-type decoding.
 
+`request.NewDeferred` keeps these providers available while reading body bytes
+only when body, form, source capture, or full raw-request access is requested.
+Metadata lookup does not read bytes. Body and form share one request snapshot;
+read and initialization errors are retained, and header overlays share cleanup.
+The existing decoder, multipart-memory, and source-overlay options also apply.
+`request.New` retains its eager construction. `body.NewDeferred` defers an
+initialized body source through an invocation-owned loader.
+
+Typed JSON body decoding excludes selected fields tagged `internal:"true"`,
+including fields promoted through an internal embedding, before decoding.
+Public field resolution follows native JSON dominance and case matching;
+public numbers, duplicate member order, aliases, and custom scalar decoding
+retain their JSON behavior. Presence markers are derived from authorized keys.
+Raw JSON capture remains byte preserving. Public opaque custom JSON contracts
+retain ownership of their representation.
+
+A binding can opt into allocating an empty record for a supplied whole JSON
+`null` with `BindingSpec.BodyNullPolicy = "empty-record"`, or the tag
+`bodyNullPolicy=empty-record`. The target must be a direct pointer to a struct
+at `body/`, without source-type adaptations or transformers. Missing bodies
+still fail required binding. The allocated record is fresh, its body is
+present, and its field markers are all false. Invalid policies and targets
+fail plan compilation; other bindings retain their null behavior.
+
+Replay uses the receiving binding's null policy and keeps original raw null
+through capture and dependency projection. Trusted typed capture verifies its
+local JSON roundtrip with full value and presence equality; serialized replay
+bytes subsequently use public body decoding and do not carry that trust.
+
 ## Cache Semantics
 
 Each `Bind` owns an invocation cache keyed by provider owner, location and target

@@ -12,6 +12,7 @@ import (
 )
 
 type BindingSpec struct {
+	BodyNullPolicy                                                           string
 	MarkerField                                                              string
 	Path, Name                                                               string
 	Location                                                                 state.Location
@@ -123,6 +124,8 @@ func bindingSpecFromField(field reflect.StructField, key string, aliases bool) (
 			case "expectedReturned":
 				result.ExpectedReturned = &v
 			}
+		case "bodyNullPolicy":
+			result.BodyNullPolicy = value
 		case "cardinality":
 			result.Cardinality = value
 		default:
@@ -157,4 +160,25 @@ func decodeBindingScalar(value string) (string, error) {
 		remaining = tail
 	}
 	return result.String(), nil
+}
+
+// ValidateBodyNullPolicy checks the bounded whole-body normalization contract.
+// The empty policy preserves the existing decoding and required-value behavior.
+func (b BindingSpec) ValidateBodyNullPolicy(target reflect.Type) error {
+	if b.BodyNullPolicy == "" {
+		return nil
+	}
+	if b.BodyNullPolicy != "empty-record" {
+		return fmt.Errorf("unsupported bodyNullPolicy %q", b.BodyNullPolicy)
+	}
+	if b.Location.Kind != "body" || b.Location.In != "" {
+		return fmt.Errorf("bodyNullPolicy requires the whole body location")
+	}
+	if target == nil || target.Kind() != reflect.Pointer || target.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("bodyNullPolicy requires a direct pointer-to-struct target")
+	}
+	if b.SourceType != nil || b.Transformer != nil {
+		return fmt.Errorf("bodyNullPolicy does not support source-type adaptations or transformers")
+	}
+	return nil
 }

@@ -18,7 +18,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/viant/parsly v0.3.3 // indirect
-	github.com/viant/x v0.4.1-0.20260913213625-0705ff85c430
+	github.com/viant/x v0.5.1-0.20260915043005-1bc42b9eef47
 	github.com/viant/xreflect v0.7.3 // indirect
 	github.com/viant/xunsafe v0.11.0 // indirect
 	golang.org/x/crypto v0.18.0 // indirect

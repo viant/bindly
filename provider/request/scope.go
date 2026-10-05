@@ -33,6 +33,7 @@ const (
 )
 
 type Scope struct {
+	deferred           *deferredRequest
 	request            *http.Request
 	path               map[string]string
 	query              url.Values
@@ -56,6 +57,9 @@ type multipartCleanup struct {
 }
 
 func (s *Scope) Close() error {
+	if s != nil && s.deferred != nil {
+		return s.deferred.close()
+	}
 	if s == nil || s.cleanup == nil {
 		return nil
 	}
@@ -209,38 +213,50 @@ func (s *Scope) Providers() []locator.Provider {
 }
 
 func (s *Scope) Request() locator.Provider {
-	return &source{kind: HTTPRequestKind, lookup: func(name string) (any, bool) {
+	return &source{kind: HTTPRequestKind, errorLookup: func(ctx context.Context, name string) (any, bool, error) {
 		if s == nil || s.request == nil {
-			return nil, false
+			return nil, false, nil
 		}
 		name = strings.ToLower(name)
 		switch name {
 		case "":
-			return s.request, true
+			if s.deferred != nil {
+				if _, err := s.deferred.bytes(ctx); err != nil {
+					return nil, false, err
+				}
+			}
+			return s.request, true, nil
 		case "method":
-			return s.request.Method, true
+			return s.request.Method, true, nil
 		case "uri":
-			return s.request.RequestURI, true
+			return s.request.RequestURI, true, nil
 		case "url":
-			return s.request.URL, true
+			return s.request.URL, true, nil
 		case "header":
-			return s.request.Header, true
+			return s.request.Header, true, nil
 		case "proto":
-			return s.request.Proto, true
+			return s.request.Proto, true, nil
 		case "remoteaddr":
-			return s.request.RemoteAddr, true
+			return s.request.RemoteAddr, true, nil
 		case "host":
-			return s.request.Host, true
+			return s.request.Host, true, nil
 		}
-		return s.request, true
+		if s.deferred != nil {
+			if _, err := s.deferred.bytes(ctx); err != nil {
+				return nil, false, err
+			}
+		}
+		return s.request, true, nil
 	}}
 }
 
 type source struct {
-	kind          string
-	lookup        func(string) (any, bool)
-	contextLookup func(context.Context, string) (any, bool)
-	typedLookup   func(reflect.Type, string) (any, bool)
+	errorLookup      func(context.Context, string) (any, bool, error)
+	errorTypedLookup func(context.Context, reflect.Type, string) (any, bool, error)
+	kind             string
+	lookup           func(string) (any, bool)
+	contextLookup    func(context.Context, string) (any, bool)
+	typedLookup      func(reflect.Type, string) (any, bool)
 }
 
 func (s *Scope) Query() locator.Provider {
@@ -299,6 +315,22 @@ func (s *Scope) Cookie() locator.Provider {
 	}}
 }
 func (s *Scope) Form() locator.Provider {
+	if s != nil && s.deferred != nil && !s.formOverlay {
+		return &source{kind: FormKind, errorTypedLookup: func(ctx context.Context, target reflect.Type, name string) (any, bool, error) {
+			values, form, err := s.deferred.formValues(ctx)
+			if err != nil {
+				return nil, false, err
+			}
+			if form != nil {
+				if value, found := body.MultipartValue(form, target, name); found {
+					return value, true, nil
+				}
+			}
+			value, found := values[name]
+			return append([]string(nil), value...), found, nil
+		}}
+	}
+
 	return &source{kind: FormKind, typedLookup: func(target reflect.Type, name string) (any, bool) {
 		if s == nil {
 			return nil, false
@@ -326,7 +358,19 @@ func (s *source) Locate(*structology.State) locator.Locator { return s }
 func (s *source) Value(ctx context.Context, target reflect.Type, name string) (any, bool, error) {
 	var value any
 	var ok bool
-	if s.typedLookup != nil {
+	if s.errorTypedLookup != nil {
+		var err error
+		value, ok, err = s.errorTypedLookup(ctx, target, name)
+		if err != nil {
+			return nil, false, err
+		}
+	} else if s.errorLookup != nil {
+		var err error
+		value, ok, err = s.errorLookup(ctx, name)
+		if err != nil {
+			return nil, false, err
+		}
+	} else if s.typedLookup != nil {
 		value, ok = s.typedLookup(target, name)
 	} else if s.contextLookup != nil {
 		value, ok = s.contextLookup(ctx, name)
@@ -340,7 +384,7 @@ func (s *source) Value(ctx context.Context, target reflect.Type, name string) (a
 		target = target.Elem()
 	}
 	collection := target != nil && (target.Kind() == reflect.Slice || target.Kind() == reflect.Array) && target != reflect.TypeOf([]byte{})
-	if values, ok := value.([]string); ok && !collection && target != nil && len(values) > 0 {
+	if values, ok := value.([]string); ok && !collection && target != nil && target.Kind() != reflect.Interface && len(values) > 0 {
 		return values[0], true, nil
 	}
 	return value, true, nil

@@ -2,6 +2,7 @@ package bindly
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/viant/bindly/locator"
 	"github.com/viant/bindly/xform/conv"
@@ -50,9 +51,20 @@ func (p *replayProvider) DefaultCacheable() bool                    { return fal
 func (p *replayProvider) Locate(*structology.State) locator.Locator { return p }
 func (p *replayProvider) Owns(name string) bool                     { _, ok := p.fields[name]; return ok }
 func (p *replayProvider) Value(ctx context.Context, target reflect.Type, name string) (any, bool, error) {
+	return p.ValueWithBodyNullPolicy(ctx, target, name, "")
+}
+func (p *replayProvider) ValueWithBodyNullPolicy(ctx context.Context, target reflect.Type, name, policy string) (any, bool, error) {
 	binding, ok := p.fields[name]
 	if !ok {
 		return nil, false, nil
+	}
+
+	// A whole-body policy always projects original JSON under the receiving
+	// binding's policy, so an opted parent cannot normalize a strict dependency.
+	if binding.BodyNullPolicy != "" || policy != "" {
+		binding.BodyNullPolicy = policy
+		result, err := p.replay.source(ctx, binding, target)
+		return result.value, result.found, err
 	}
 	if value, prepared := p.replay.prepared[binding.Path]; prepared && binding.Transformer == nil {
 		if !value.found {
@@ -67,4 +79,21 @@ func (p *replayProvider) Value(ctx context.Context, target reflect.Type, name st
 	}
 	result, err := p.replay.source(ctx, binding, target)
 	return result.value, result.found, err
+}
+
+// CaptureSource preserves replay JSON when the replay is projected to another
+// component; prepared empty records must not fabricate authored object fields.
+func (p *replayProvider) CaptureSource(ctx context.Context, target reflect.Type, name string) (any, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	binding, ok := p.fields[name]
+	if !ok {
+		return nil, false, nil
+	}
+	raw, found := p.replay.raw[binding.Name]
+	if !found {
+		return nil, false, nil
+	}
+	return append(json.RawMessage(nil), raw...), true, nil
 }

@@ -227,7 +227,7 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 				result, err = s.replay.Replay.source(ctx, selectedBinding, sourceType)
 			}
 		} else {
-			result, err = s.resolveResult(ctx, &binding.Location, sourceType, binding.Cacheable)
+			result, err = s.resolveBindingResult(ctx, &binding.Location, sourceType, binding.Cacheable, binding.BodyNullPolicy)
 		}
 		if !preparedValue && err == nil && !result.found && binding.DefaultValue != nil {
 			var defaultValue any
@@ -333,6 +333,9 @@ func (s *invocation) resolveWithPolicy(ctx context.Context, location *state.Loca
 }
 
 func (s *invocation) resolveResult(ctx context.Context, location *state.Location, target reflect.Type, cacheable *bool) (resolution, error) {
+	return s.resolveBindingResult(ctx, location, target, cacheable, "")
+}
+func (s *invocation) resolveBindingResult(ctx context.Context, location *state.Location, target reflect.Type, cacheable *bool, bodyNullPolicy string) (resolution, error) {
 	if location == nil {
 		return resolution{}, fmt.Errorf("binding location is required")
 	}
@@ -353,6 +356,10 @@ func (s *invocation) resolveResult(ctx context.Context, location *state.Location
 		}
 		if cacheable != nil {
 			shouldCache = *cacheable
+		}
+		// Policy decoding owns fresh records and cannot reuse strict cache entries.
+		if bodyNullPolicy != "" {
+			shouldCache = false
 		}
 		cacheKey := resolutionKey{owner: current, location: *location, target: target}
 		// Scope identity qualifies persisted entries. Resolve child providers before
@@ -395,6 +402,12 @@ func (s *invocation) resolveResult(ctx context.Context, location *state.Location
 		}
 		if raw != nil {
 			value, found, err = raw.CaptureSource(ctx, target, location.In)
+		} else if bodyNullPolicy != "" {
+			policyLocator, ok := valueLocator.(locator.BodyNullPolicyLocator)
+			if !ok {
+				return resolution{}, fmt.Errorf("provider %s does not support bodyNullPolicy", location.Kind)
+			}
+			value, found, err = policyLocator.ValueWithBodyNullPolicy(ctx, target, location.In, bodyNullPolicy)
 		} else if scoped, ok := valueLocator.(locator.ScopedLocator); ok {
 			value, found, err = scoped.ValueInScope(ctx, s, target, location.In)
 		} else {

@@ -119,6 +119,9 @@ func (i *Injector) CompilePlan(target reflect.Type, specs ...BindingSpec) (*Plan
 				*metadata = cloned
 			}
 		}
+		if err := spec.ValidateBodyNullPolicy(resolved.Type); err != nil {
+			return nil, fmt.Errorf("binding %s: %w", spec.Path, err)
+		}
 		plan.bindings = append(plan.bindings, spec)
 	}
 	return plan, nil
@@ -194,4 +197,18 @@ func resolvePlanField(target reflect.Type, path string) (reflect.StructField, er
 	}
 	leaf.Index = indexes
 	return leaf, nil
+}
+
+// ExplicitPresence reports suppliedness only from an actual compiled marker.
+// Markerless inputs return hasMarker=false and cannot prove explicit null.
+func (p *Plan) ExplicitPresence(target any, path string) (present, hasMarker bool, err error) {
+	marker, err := p.presenceMarker(target, path)
+	if err != nil || marker == "" {
+		return false, false, err
+	}
+	value, found := p.fields[marker].Value(reflect.ValueOf(target))
+	if !found {
+		return false, true, nil
+	}
+	return value.Bool(), true, nil
 }

@@ -30,6 +30,8 @@ func TestRequestProviders(t *testing.T) {
 		want       any
 	}{
 		{QueryKind, "ids", reflect.TypeOf([]int{}), []string{"1", "2"}},
+		{QueryKind, "ids", reflect.TypeFor[any](), []string{"1", "2"}},
+		{QueryKind, "ids", reflect.TypeOf(""), "1"},
 		{PathKind, "id", reflect.TypeOf(0), "6"},
 		{HeaderKind, "x-count", reflect.TypeOf(0), "4"},
 		{CookieKind, "count", reflect.TypeOf(0), "5"},
