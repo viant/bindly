@@ -95,17 +95,65 @@ destinations receive every value. Untyped provider lookup also preserves every
 repeated value. Form and body can both resolve typed multipart values and file
 headers, matching Datly parameter semantics. The body provider also supports
 JSON, named JSON fields, raw bytes or strings, and custom media-type decoders.
-`Scope.Close` removes multipart temporary files.
+Custom decoders can be registered with `request.WithDecoder`. Configure the
+multipart memory threshold with `request.WithMaxMultipartMemory`.
+`Scope.Close` removes temporary files owned by the cloned multipart request;
+header overlays share that cleanup ownership.
+
+A single empty query value is present by default. Opt into treating it as absent
+with `request.WithIgnoreEmptyQueryParameters(true)` or the invocation-local
+`request.WithQueryPolicy`; repeated values retain their presence.
 
 ## Cache Semantics
 
-The value cache is invocation-scoped and keyed by logical binding name, matching
-Datly parameter shadowing semantics. A binding-level `cacheable` value overrides
-the provider's `locator.CachePolicy`; providers without a policy default to
-non-cacheable. Cacheable values use per-name single-flight locking and are
-rechecked after lock acquisition.
+Each `Bind` owns an invocation cache keyed by provider owner, location and target
+type. A binding-level `cacheable` value overrides the provider's
+`locator.CachePolicy`; providers without a policy default to non-cacheable.
 
-`ValueCache` is not a response cache or persistent storage mechanism.
+The injector also owns a value cache for cacheable, source-independent bindings
+using an explicit plan. `ForScope` creates a separate value cache. Default
+persistent reuse is disabled when binding from a source object or observing
+binding metadata. `WithValueCache` explicitly supplies a shared cache;
+nonempty `WithSource` objects qualify entries by source identity. Cacheable
+resolutions use per-key locking and recheck the cache after acquiring the lock.
+Child providers are checked before cached parent values.
+
+Explicit persistent caches store values, not binding metadata. Applications
+must manage their lifetime and invalidate them when the underlying provider
+changes. `ValueCache.Save` and `Load` support filesystem snapshots; this is not
+an HTTP response cache. Raw replay capture bypasses decoded persistent values.
+
+## Binding Options and Compatibility
+
+`WithPlan` selects a compiled contract, and `WithSource` supplies state for
+state-dependent providers. `OnlyKinds` and `SkipKinds` restrict the bindings
+resolved by a call. Required bindings reject missing or null values by default;
+`AllowMissingRequired` explicitly relaxes that policy.
+
+The existing `WithState[T]` / `Inject` entry point uses the same compiled-plan
+execution path. Its `WithCache`, `WithAllowedKinds`, `WithDelayedLocator` and
+`WithMissingPolicy` options remain available.
+
+`locator.ComposeProviders` resolves named layers in declared order. A found
+value, including null, an error, or an authoritative missing value stops
+fallback. Layer names must be nonempty and unique; every layer must supply the
+same kind. The composed priority is the maximum layer priority, and default
+caching requires every layer to permit it.
+
+## Projection, Metadata and Replay
+
+`Plan.Projection` exposes selected bindings under their canonical names or
+explicit aliases without creating a second binding pipeline. `WithBindingObserver`
+receives binding events, including metadata supplied by metadata-aware locators.
+
+`Plan.Replay` selects bindings for a replay contract. `Capture` snapshots typed
+values, `DecodeJSON` accepts replay JSON, and `CaptureSources` snapshots selected
+provider sources before transformation, defaults or dependencies run. Providers
+implementing `locator.SourceCapturer` can retain raw JSON presence and numbers.
+`ReplayPlan.Prepare` declares fresh prerequisite bindings; `WithReplay` applies
+the replay through the normal binding and authorization path. See
+[replay tests](replay_test.go) and [source capture tests](replay_capture_test.go)
+for complete examples.
 
 ## Embedded Resources
 
@@ -142,10 +190,10 @@ remain responsible for the concurrency safety of the data they expose.
 
 ## Verification
 
-This module targets Go 1.23.1. Run:
+The module requires Go 1.25 or newer. Run against this module's dependencies:
 
 ```bash
-GOTOOLCHAIN=go1.23.1 go test ./...
-GOTOOLCHAIN=go1.23.1 go test -race ./...
-GOTOOLCHAIN=go1.23.1 go vet ./...
+GOWORK=off GO111MODULE=on go test -mod=readonly ./...
+GOWORK=off GO111MODULE=on go test -mod=readonly -race ./...
+GOWORK=off GO111MODULE=on go vet -mod=readonly ./...
 ```
