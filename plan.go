@@ -1,191 +1,197 @@
 package bindly
 
 import (
+	"context"
 	"fmt"
+	"github.com/viant/bindly/internal/field"
+	"github.com/viant/bindly/state"
+	xshape "github.com/viant/x/shape"
 	"reflect"
-	"sort"
 	"strings"
 
-	"github.com/viant/bindly/state"
-	"github.com/viant/bindly/xform"
+	"github.com/viant/tagly/tags"
 )
 
-// BindingSpec is registration-time binding metadata independent of struct
-// tags. Datly and other compilers can build it directly from their own IR.
-type BindingSpec struct {
-	Path string
-	// SourceType is the value type requested from the provider before any
-	// transformer runs. Nil defaults to the destination field type.
-	SourceType   reflect.Type
-	Location     state.Location
-	Name         string
-	Scope        string
-	When         string
-	ErrorCode    int
-	ErrorMessage string
-	DataType     string
-	Cardinality  string
-	With         string
-	URI          string
-	ResourceRef  string
-	Required     *bool
-	Cacheable    *bool
-	Async        bool
-	DefaultValue interface{}
-	Priority     int
-	Extension    interface{}
-	Transformer  xform.Transformer
-}
-
-// Plan is an immutable, reusable binding plan for one destination struct type.
-// It contains selectors and metadata only; providers are always resolved from
-// the active injector scope at bind time.
+// Plan contains only immutable target metadata; providers are resolved per bind.
 type Plan struct {
-	targetType  reflect.Type
-	bindingType *BindingType
+	target   reflect.Type
+	bindings []BindingSpec
+	fields   map[string]field.Access
 }
 
-// CompilePlan validates explicit binding metadata and resolves destination
-// selectors once. The resulting plan is safe to reuse across request scopes.
-func (i *Injector) CompilePlan(targetType reflect.Type, specs ...BindingSpec) (*Plan, error) {
+func (i *Injector) CompilePlan(target reflect.Type, specs ...BindingSpec) (*Plan, error) {
 	if i == nil {
 		return nil, fmt.Errorf("injector is required")
 	}
-	targetType, err := planTargetType(targetType)
-	if err != nil {
-		return nil, err
+	for target != nil && target.Kind() == reflect.Pointer {
+		target = target.Elem()
 	}
-	return (&planCompiler{injector: i, targetType: targetType}).compile(specs)
-}
-
-type planCompiler struct {
-	injector   *Injector
-	targetType reflect.Type
-}
-
-func (c *planCompiler) compile(specs []BindingSpec) (*Plan, error) {
-	bindings := make(Bindings, 0, len(specs))
+	if target == nil || target.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("binding target must be a struct")
+	}
+	plan := &Plan{target: target, fields: map[string]field.Access{}}
+	if specs == nil {
+		for _, field := range reflect.VisibleFields(target) {
+			if !field.IsExported() {
+				continue
+			}
+			spec, found, err := bindingSpecFromField(field, i.bindingTag, i.bindingTag == bindingTag)
+			if err != nil {
+				return nil, err
+			}
+			if found {
+				specs = append(specs, spec)
+			} else if field.Type.Kind() == reflect.Interface {
+				specs = append(specs, BindingSpec{Path: field.Name, Name: field.Name, Location: state.Location{Kind: i.interfaceKind, In: field.Type.String()}})
+			}
+		}
+	}
 	seen := map[string]bool{}
 	for _, spec := range specs {
-		path := strings.TrimSpace(spec.Path)
-		if path == "" {
-			return nil, fmt.Errorf("binding destination path is required")
+		if seen[spec.Path] {
+			return nil, fmt.Errorf("duplicate binding path %s", spec.Path)
 		}
-		if seen[path] {
-			return nil, fmt.Errorf("duplicate binding destination path %q", path)
-		}
-		seen[path] = true
-		if strings.TrimSpace(spec.Location.Kind) == "" {
-			return nil, fmt.Errorf("binding kind is required for path %q", path)
-		}
-		field, index, err := c.field(path)
+		seen[spec.Path] = true
+		resolved, err := resolvePlanField(target, spec.Path)
 		if err != nil {
 			return nil, err
 		}
-		location := spec.Location
-		required := cloneBool(spec.Required)
-		cacheable := cloneBool(spec.Cacheable)
-		binding := &Binding{
-			path:         path,
-			index:        index,
-			fieldType:    field.Type,
-			sourceType:   spec.SourceType,
-			location:     &location,
-			Name:         spec.Name,
-			Scope:        spec.Scope,
-			When:         spec.When,
-			ErrorCode:    spec.ErrorCode,
-			ErrorMessage: spec.ErrorMessage,
-			DataType:     spec.DataType,
-			Cardinality:  spec.Cardinality,
-			With:         spec.With,
-			URI:          spec.URI,
-			ResourceRef:  spec.ResourceRef,
-			Required:     required,
-			Cacheable:    cacheable,
-			Async:        spec.Async,
-			DefaultValue: spec.DefaultValue,
-			Tag:          field.Tag,
-			Extension:    spec.Extension,
-			priority:     spec.Priority,
-			transformer:  spec.Transformer,
+		plan.fields[spec.Path] = field.Access{Index: append([]int(nil), resolved.Index...), Type: resolved.Type}
+		if err := spec.compileRecordCount(resolved.Type); err != nil {
+			return nil, fmt.Errorf("binding %s: %w", spec.Path, err)
 		}
-		if binding.sourceType == nil {
-			binding.sourceType = field.Type
+		if spec.MarkerField == "" {
+			for _, candidate := range reflect.VisibleFields(target) {
+				if candidate.Tag.Get("setMarker") == "true" {
+					leaf := spec.Path
+					if index := strings.LastIndex(leaf, "."); index >= 0 {
+						leaf = leaf[index+1:]
+					}
+					path := candidate.Name + "." + leaf
+					if marker, err := resolvePlanField(target, path); err == nil && marker.Type.Kind() == reflect.Bool {
+						spec.MarkerField = path
+						break
+					}
+				}
+			}
 		}
-		if binding.Name == "" {
-			binding.Name = path
+		if spec.MarkerField != "" {
+			marker, err := resolvePlanField(target, spec.MarkerField)
+			if err != nil {
+				return nil, err
+			}
+			if marker.Type.Kind() != reflect.Bool {
+				return nil, fmt.Errorf("binding marker %s must be bool", spec.MarkerField)
+			}
+			plan.fields[spec.MarkerField] = field.Access{Index: marker.Index, Type: marker.Type}
 		}
-		bindings = append(bindings, binding)
+		if spec.Location.Kind == "" {
+			return nil, fmt.Errorf("binding %s requires a source kind", spec.Path)
+		}
+		if spec.Required != nil {
+			v := *spec.Required
+			spec.Required = &v
+		}
+		if spec.Cacheable != nil {
+			v := *spec.Cacheable
+			spec.Cacheable = &v
+		}
+		if spec.Transformer == nil {
+			if raw, ok := resolved.Tag.Lookup(i.xformTag); ok {
+				name, arguments := tags.Values(raw).Name()
+				factory, ok := i.transformers.Lookup(name)
+				if !ok {
+					return nil, fmt.Errorf("failed to lookup transformer: %s", name)
+				}
+				transformer, err := factory.Create(context.Background(), arguments, resolved.Type, nil)
+				if err != nil {
+					return nil, err
+				}
+				spec.Transformer = transformer
+			}
+		}
+		for _, metadata := range []*any{&spec.DefaultValue, &spec.Extension} {
+			if *metadata != nil {
+				cloned, err := (xshape.Runtime{}).CloneValue(*metadata)
+				if err != nil {
+					return nil, fmt.Errorf("binding %s metadata: %w", spec.Path, err)
+				}
+				*metadata = cloned
+			}
+		}
+		plan.bindings = append(plan.bindings, spec)
 	}
-	sort.SliceStable(bindings, func(i, j int) bool {
-		return bindings[i].priority < bindings[j].priority
-	})
-	return &Plan{
-		targetType: c.targetType,
-		bindingType: &BindingType{
-			Bindings: groupBindings(bindings),
-		},
-	}, nil
+	return plan, nil
 }
 
-func cloneBool(value *bool) *bool {
-	if value == nil {
+func (p *Plan) TargetType() reflect.Type {
+	if p == nil {
 		return nil
 	}
-	result := *value
-	return &result
+	return p.target
 }
 
-func (c *planCompiler) field(path string) (reflect.StructField, []int, error) {
-	current := c.targetType
-	var index []int
-	parts := strings.Split(path, ".")
-	for i, name := range parts {
-		for current.Kind() == reflect.Ptr {
-			current = current.Elem()
-		}
-		if current.Kind() != reflect.Struct {
-			return reflect.StructField{}, nil, fmt.Errorf("binding destination path %q traverses non-struct %s", path, current)
-		}
-		field, ok := current.FieldByName(name)
-		if !ok {
-			return reflect.StructField{}, nil, fmt.Errorf("binding destination path %q was not found on %s", path, c.targetType)
-		}
-		index = append(index, field.Index...)
-		current = field.Type
-		if i == len(parts)-1 {
-			return field, index, nil
-		}
+// Presence reads a binding's compiled presence marker. Inputs without a marker
+// carry values unconditionally. Missing marker pointers represent absence.
+func (p *Plan) Presence(target any, path string) (bool, error) {
+	marker, err := p.presenceMarker(target, path)
+	if err != nil {
+		return false, err
 	}
-	return reflect.StructField{}, nil, fmt.Errorf("binding destination path %q was not found on %s", path, c.targetType)
+	if marker == "" {
+		return true, nil
+	}
+	value, found := p.fields[marker].Value(reflect.ValueOf(target))
+	if !found {
+		return false, nil
+	}
+	return value.Bool(), nil
 }
 
-func groupBindings(bindings Bindings) []Bindings {
-	if len(bindings) == 0 {
-		return nil
+// SetPresence restores presence through the same compiled marker used by Bind.
+func (p *Plan) SetPresence(target any, path string, present bool) error {
+	marker, err := p.presenceMarker(target, path)
+	if err != nil || marker == "" {
+		return err
 	}
-	result := []Bindings{{bindings[0]}}
-	for _, binding := range bindings[1:] {
-		last := result[len(result)-1]
-		if last[0].priority != binding.priority {
-			result = append(result, Bindings{binding})
-			continue
-		}
-		result[len(result)-1] = append(last, binding)
-	}
-	return result
+	return p.fields[marker].Set(reflect.ValueOf(target), present)
 }
 
-func planTargetType(targetType reflect.Type) (reflect.Type, error) {
-	if targetType == nil {
-		return nil, fmt.Errorf("binding target type is required")
+func (p *Plan) presenceMarker(target any, path string) (string, error) {
+	if p == nil {
+		return "", fmt.Errorf("binding plan is required")
 	}
-	for targetType.Kind() == reflect.Ptr {
-		targetType = targetType.Elem()
+	value := reflect.ValueOf(target)
+	if !value.IsValid() || value.Kind() != reflect.Pointer || value.IsNil() || value.Elem().Type() != p.target {
+		return "", fmt.Errorf("presence target must be *%s", p.target)
 	}
-	if targetType.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("binding target must be a struct, got %s", targetType)
+	for _, binding := range p.bindings {
+		if binding.Path == path {
+			return binding.MarkerField, nil
+		}
 	}
-	return targetType, nil
+	return "", fmt.Errorf("presence binding %s is not defined", path)
+}
+
+// resolvePlanField retains the complete selector index across nested parents.
+func resolvePlanField(target reflect.Type, path string) (reflect.StructField, error) {
+	var indexes []int
+	var leaf reflect.StructField
+	for _, name := range strings.Split(path, ".") {
+		for target.Kind() == reflect.Pointer {
+			target = target.Elem()
+		}
+		if target.Kind() != reflect.Struct {
+			return leaf, fmt.Errorf("binding path %q traverses non-struct %s", path, target)
+		}
+		field, ok := target.FieldByName(name)
+		if !ok || !field.IsExported() {
+			return leaf, fmt.Errorf("binding path %q is not defined", path)
+		}
+		indexes = append(indexes, field.Index...)
+		target = field.Type
+		leaf = field
+	}
+	leaf.Index = indexes
+	return leaf, nil
 }

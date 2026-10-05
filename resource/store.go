@@ -1,99 +1,106 @@
-// Package resource provides namespace-scoped access to standard Go filesystems,
-// including go:embed values.
+// Package resource owns named package filesystems shared by compilation and
+// invocation. Registering a named filesystem never creates an implicit default.
 package resource
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"strings"
 	"sync"
 )
 
 type Store struct {
-	mu     sync.RWMutex
-	byName map[string]fs.FS
+	mu        sync.RWMutex
+	sources   map[string]fs.FS
+	authority *Store
+	defaultFS fs.FS
 }
 
-func New() *Store {
-	return &Store{byName: map[string]fs.FS{}}
-}
+func New() *Store { return &Store{sources: map[string]fs.FS{}} }
 
-// Register adds a filesystem namespace. An empty name registers the default
-// namespace used by references without a prefix.
-func (s *Store) Register(name string, source fs.FS) error {
-	if s == nil {
-		return fmt.Errorf("resource store is required")
+// WithDefault returns a source-local default view over the same named authority.
+// Named Register/Lookup remain shared; registering a default on this view fails
+// because its default was fixed at construction. The supplied FS must be immutable.
+func (s *Store) WithDefault(source fs.FS) (*Store, error) {
+	if s == nil || source == nil {
+		return nil, fmt.Errorf("resource filesystem is required")
 	}
-	if source == nil {
+	authority := s
+	if s.authority != nil {
+		authority = s.authority
+	}
+	return &Store{authority: authority, defaultFS: source}, nil
+}
+
+func (s *Store) Register(name string, source fs.FS) error {
+	if s == nil || source == nil {
 		return fmt.Errorf("resource filesystem is required")
 	}
 	name = strings.TrimSpace(name)
+	if strings.ContainsAny(name, ":/\\") {
+		return fmt.Errorf("invalid resource namespace %q", name)
+	}
+	if s.authority != nil {
+		if name == "" {
+			return fmt.Errorf("scoped resource default is already registered")
+		}
+		return s.authority.Register(name, source)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.byName[name]; ok {
+	if _, exists := s.sources[name]; exists {
 		return fmt.Errorf("resource namespace %q is already registered", name)
 	}
-	s.byName[name] = source
+	if s.sources == nil {
+		s.sources = map[string]fs.FS{}
+	}
+	s.sources[name] = source
 	return nil
 }
 
-func (s *Store) ReadFile(reference string) ([]byte, error) {
-	name, path := splitReference(reference)
-	source, name, ok := s.filesystem(name)
-	if !ok {
-		return nil, fmt.Errorf("resource namespace %q is not registered", name)
+func (s *Store) Lookup(name string) (fs.FS, bool) {
+	if s == nil {
+		return nil, false
 	}
-	path = strings.TrimPrefix(path, "/")
-	if path == "" {
-		return nil, fmt.Errorf("resource path is required")
+	if s.authority != nil {
+		if name == "" {
+			return s.defaultFS, true
+		}
+		return s.authority.Lookup(name)
 	}
-	data, err := fs.ReadFile(source, path)
-	if err != nil {
-		return nil, fmt.Errorf("read resource %q: %w", reference, err)
-	}
-	return data, nil
-}
-
-// Filesystem returns a registered namespace without wrapping the underlying
-// fs.FS. Callers that require embed-specific APIs can type-assert the original
-// embed.FS value.
-func (s *Store) Filesystem(name string) (fs.FS, bool) {
-	source, _, ok := s.filesystem(strings.TrimSpace(name))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	source, ok := s.sources[name]
 	return source, ok
 }
 
-// Open opens a namespaced resource through the registered filesystem.
 func (s *Store) Open(reference string) (fs.File, error) {
-	name, path := splitReference(reference)
-	source, name, ok := s.filesystem(name)
+	namespace, path, qualified := strings.Cut(reference, ":")
+	if !qualified {
+		path = namespace
+		namespace = ""
+	}
+	if !fs.ValidPath(path) {
+		return nil, &fs.PathError{Op: "open", Path: reference, Err: fs.ErrInvalid}
+	}
+	source, ok := s.Lookup(namespace)
 	if !ok {
-		return nil, fmt.Errorf("resource namespace %q is not registered", name)
+		return nil, &fs.PathError{Op: "open", Path: reference, Err: fmt.Errorf("resource namespace %q: %w", namespace, fs.ErrNotExist)}
 	}
-	path = strings.TrimPrefix(path, "/")
-	if path == "" {
-		return nil, fmt.Errorf("resource path is required")
-	}
-	file, err := source.Open(path)
+	return source.Open(path)
+}
+
+func (s *Store) ReadFile(reference string) ([]byte, error) {
+	file, err := s.Open(reference)
 	if err != nil {
-		return nil, fmt.Errorf("open resource %q: %w", reference, err)
+		return nil, err
 	}
-	return file, nil
+	defer file.Close()
+	return io.ReadAll(file)
 }
 
-func (s *Store) filesystem(name string) (fs.FS, string, bool) {
-	if s == nil {
-		return nil, name, false
-	}
-	s.mu.RLock()
-	source, ok := s.byName[name]
-	s.mu.RUnlock()
-	return source, name, ok
-}
-
-func splitReference(reference string) (string, string) {
-	reference = strings.TrimSpace(reference)
-	if index := strings.IndexByte(reference, ':'); index >= 0 {
-		return strings.TrimSpace(reference[:index]), strings.TrimSpace(reference[index+1:])
-	}
-	return "", reference
+// Filesystem returns the registered filesystem for a namespace.
+func (s *Store) Filesystem(name string) (fs.FS, bool) {
+	return s.Lookup(strings.TrimSpace(name))
 }

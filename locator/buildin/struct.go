@@ -2,10 +2,9 @@ package buildin
 
 import (
 	"context"
-	"reflect"
-
 	"github.com/viant/bindly/locator"
 	"github.com/viant/structology"
+	"reflect"
 )
 
 type (
@@ -21,7 +20,10 @@ type (
 	}
 )
 
-func (l *structLocator) Value(ctx context.Context, _ reflect.Type, name string) (interface{}, bool, error) {
+func (l *structLocator) Value(ctx context.Context, targetType reflect.Type, name string) (interface{}, bool, error) {
+	if l.state == nil {
+		return nil, false, nil
+	}
 	aPath := l.rootSelector + "." + name
 	if name == "" {
 		aPath = l.rootSelector
@@ -29,7 +31,14 @@ func (l *structLocator) Value(ctx context.Context, _ reflect.Type, name string) 
 		aPath = name
 	}
 	if aPath == "" {
-		return l.state.State(), true, nil
+		value := l.state.StatePtr()
+		if value == nil {
+			value = l.state.State()
+		}
+		return value, true, nil
+	}
+	if l.state.Type().Lookup(aPath) == nil {
+		return nil, false, nil
 	}
 	selector, err := l.state.Selector(aPath)
 	if err != nil {

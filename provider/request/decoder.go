@@ -1,10 +1,10 @@
 package request
 
-import bodyprovider "github.com/viant/bindly/provider/body"
+import "github.com/viant/bindly/provider/body"
 
-type Decoder = bodyprovider.Decoder
-type DecoderFunc = bodyprovider.DecoderFunc
-type FieldDecoder = bodyprovider.FieldDecoder
-type DecoderRegistry = bodyprovider.DecoderRegistry
+type Decoder = body.Decoder
+type DecoderFunc = body.DecoderFunc
+type FieldDecoder = body.FieldDecoder
+type DecoderRegistry = body.DecoderRegistry
 
-func NewDecoderRegistry() *DecoderRegistry { return bodyprovider.NewDecoderRegistry() }
+func NewDecoderRegistry() *DecoderRegistry { return body.NewDecoderRegistry() }

@@ -4,74 +4,109 @@ import (
 	"encoding/json"
 	"reflect"
 	"strings"
+
+	"github.com/viant/bindly/internal/field"
+	xshape "github.com/viant/x/shape"
 )
 
-func applyJSONPresence(raw []byte, value reflect.Value) {
-	for value.IsValid() && value.Kind() == reflect.Ptr {
-		if value.IsNil() {
-			return
+// markPresence records authored JSON keys on generated set-marker holders.
+// JSON decoding remains encoding/json's responsibility; this traversal only
+// projects source presence onto its already-decoded typed object graph.
+func (s *Source) markPresence(target reflect.Value, raw json.RawMessage) error {
+	for target.IsValid() && target.Kind() == reflect.Pointer {
+		if target.IsNil() {
+			return nil
 		}
-		value = value.Elem()
+		target = target.Elem()
 	}
-	if !value.IsValid() {
-		return
+	if !target.IsValid() {
+		return nil
 	}
-	switch value.Kind() {
-	case reflect.Struct:
-		fields := map[string]json.RawMessage{}
-		if err := json.Unmarshal(raw, &fields); err != nil {
-			return
+	if target.Kind() == reflect.Slice || target.Kind() == reflect.Array {
+		var values []json.RawMessage
+		if err := json.Unmarshal(raw, &values); err != nil {
+			return nil
 		}
-		marker := presenceMarker(value)
-		for name, fieldRaw := range fields {
-			fieldIndex, fieldName, ok := fieldByJSONName(value.Type(), name)
-			if !ok {
-				continue
+		for i, value := range values {
+			if i >= target.Len() {
+				break
 			}
-			if marker.IsValid() {
-				flag := marker.FieldByName(fieldName)
-				if flag.IsValid() && flag.CanSet() && flag.Kind() == reflect.Bool {
-					flag.SetBool(true)
-				}
+			if err := s.markPresence(target.Index(i), value); err != nil {
+				return err
 			}
-			applyJSONPresence(fieldRaw, value.Field(fieldIndex))
 		}
-	case reflect.Slice:
-		items := []json.RawMessage{}
-		if err := json.Unmarshal(raw, &items); err != nil {
-			return
+		return nil
+	}
+	if target.Kind() != reflect.Struct {
+		return nil
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return nil
+	}
+	fields, err := xshape.Linked(target.Type()).Fields()
+	if err != nil {
+		return err
+	}
+	marker := ""
+	for _, item := range fields {
+		if item.Tag.Get("setMarker") == "true" {
+			marker = item.Name
+			break
 		}
-		for index := 0; index < len(items) && index < value.Len(); index++ {
-			applyJSONPresence(items[index], value.Index(index))
+	}
+	if marker != "" {
+		resolved, err := xshape.Linked(target.Type()).StructField(marker)
+		if err != nil {
+			return err
+		}
+		access := field.Access{Index: resolved.Index, Type: resolved.Type}
+		// Presence is derived from business keys, never accepted from JSON. Reset
+		// even an explicitly supplied marker before populating derived flags.
+		value := reflect.Zero(resolved.Type)
+		if resolved.Type.Kind() == reflect.Pointer {
+			value = reflect.New(resolved.Type.Elem())
+		}
+		if err = access.Set(target, value.Interface()); err != nil {
+			return err
 		}
 	}
-}
-
-func presenceMarker(value reflect.Value) reflect.Value {
-	field, ok := value.Type().FieldByName("Has")
-	if !ok || field.Tag.Get("setMarker") != "true" {
-		return reflect.Value{}
-	}
-	marker := value.FieldByIndex(field.Index)
-	if !marker.CanSet() || marker.Kind() != reflect.Ptr || marker.Type().Elem().Kind() != reflect.Struct {
-		return reflect.Value{}
-	}
-	if marker.IsNil() {
-		marker.Set(reflect.New(marker.Type().Elem()))
-	}
-	return marker.Elem()
-}
-
-func fieldByJSONName(valueType reflect.Type, name string) (int, string, bool) {
-	for index := 0; index < valueType.NumField(); index++ {
-		field := valueType.Field(index)
-		if field.Name == "Has" {
+	for _, item := range fields {
+		if !item.Exported || item.Tag.Get("setMarker") == "true" {
 			continue
 		}
-		jsonName := strings.SplitN(field.Tag.Get("json"), ",", 2)[0]
-		if field.Name == name || strings.EqualFold(field.Name, name) || jsonName != "-" && strings.EqualFold(jsonName, name) {
-			return index, field.Name, true
+		name, _, _ := strings.Cut(item.Tag.Get("json"), ",")
+		if name == "-" {
+			continue
+		}
+		if name == "" {
+			name = item.Name
+		}
+		value, present := object[name]
+		if !present {
+			for key, candidate := range object {
+				if strings.EqualFold(key, name) {
+					value, present = candidate, true
+					break
+				}
+			}
+		}
+		if !present {
+			continue
+		}
+		if marker != "" {
+			if flag, err := xshape.Linked(target.Type()).StructField(marker + "." + item.Name); err == nil && flag.Type.Kind() == reflect.Bool {
+				if err = (field.Access{Index: flag.Index, Type: flag.Type}).Set(target, true); err != nil {
+					return err
+				}
+			}
+		}
+		child, ok := (field.Access{Index: item.Index, Type: item.ReflectedType}).Value(target)
+		if ok {
+			if err = s.markPresence(child, value); err != nil {
+				return err
+			}
 		}
 	}
-	return -1, "", false
+	return nil
 }

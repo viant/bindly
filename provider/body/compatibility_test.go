@@ -1,6 +1,7 @@
 package body_test
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
@@ -17,7 +18,7 @@ func TestSourceDecodesTypedJSONAndPresence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, found, err := source.Value(reflect.TypeOf(payload{}), "")
+	value, found, err := source.Value(context.Background(), reflect.TypeOf(payload{}), "")
 	if err != nil || !found {
 		t.Fatalf("Value() = (%#v, %v, %v)", value, found, err)
 	}
@@ -33,7 +34,7 @@ func TestSourceSupportsExactNamedJSONLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, found, err := folded.Value(reflect.TypeOf(""), "name")
+	value, found, err := folded.Value(context.Background(), reflect.TypeOf(""), "name")
 	if err != nil || !found || value != "Ada" {
 		t.Fatalf("folded Value() = (%#v, %v, %v)", value, found, err)
 	}
@@ -41,10 +42,10 @@ func TestSourceSupportsExactNamedJSONLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value, found, err = exact.Value(reflect.TypeOf(""), "name"); err != nil || found || value != nil {
+	if value, found, err = exact.Value(context.Background(), reflect.TypeOf(""), "name"); err != nil || found || value != nil {
 		t.Fatalf("exact miss Value() = (%#v, %v, %v)", value, found, err)
 	}
-	value, found, err = exact.Value(reflect.TypeOf(""), "Name")
+	value, found, err = exact.Value(context.Background(), reflect.TypeOf(""), "Name")
 	if err != nil || !found || value != "Ada" {
 		t.Fatalf("exact Value() = (%#v, %v, %v)", value, found, err)
 	}

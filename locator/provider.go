@@ -8,8 +8,4 @@ type Provider interface {
 	Priority() int
 }
 
-// CachePolicy declares the provider's default when a binding does not specify
-// cacheable explicitly. A binding-level option always wins.
-type CachePolicy interface {
-	DefaultCacheable() bool
-}
+type CachePolicy interface{ DefaultCacheable() bool }

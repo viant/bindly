@@ -9,7 +9,7 @@ import (
 
 func TestBindTagCarriesOriginalParameterSurface(t *testing.T) {
 	type target struct {
-		Value string `bind:"logical,kind=test,in=source,when=enabled,scope=request,errorCode=422,errorMessage=invalid,dataType=string,cardinality=One,with=Aux,required=false,cacheable=false,async=true,uri=embed.sql,resource=assets:query.sql,value='fallback'"`
+		Value string `bind:"logical,kind=test,in=source,when=Enabled,scope=request,errorCode=422,errorMessage=invalid,dataType=string,cardinality=One,with=Aux,required=false,cacheable=false,async=true,uri=embed.sql,resource=assets:query.sql,value='fallback'"`
 	}
 	provider := &testProvider{kind: "test", priority: 1, loc: &fixedLocator{kind: "test", value: "resolved"}}
 	injector, err := NewInjector(WithProviders(provider))
@@ -17,7 +17,7 @@ func TestBindTagCarriesOriginalParameterSurface(t *testing.T) {
 		t.Fatalf("NewInjector() error = %v", err)
 	}
 	actual := &target{}
-	if err := injector.Bind(context.Background(), actual); err != nil {
+	if err := injector.Bind(context.Background(), actual, WithSource(&struct{ Enabled bool }{true})); err != nil {
 		t.Fatalf("Bind() error = %v", err)
 	}
 	bindingType, ok := injector.bindingCache.Get(reflect.TypeOf(target{}))
@@ -28,7 +28,7 @@ func TestBindTagCarriesOriginalParameterSurface(t *testing.T) {
 	if binding.Name != "logical" || binding.Kind() != "test" || binding.In() != "source" {
 		t.Fatalf("unexpected identity: %+v", binding)
 	}
-	if binding.When != "enabled" || binding.Scope != "request" || binding.ErrorCode != 422 || binding.ErrorMessage != "invalid" {
+	if binding.When != "Enabled" || binding.Scope != "request" || binding.ErrorCode != 422 || binding.ErrorMessage != "invalid" {
 		t.Fatalf("unexpected control metadata: %+v", binding)
 	}
 	if binding.DataType != "string" || binding.Cardinality != "One" || binding.With != "Aux" || binding.URI != "embed.sql" {

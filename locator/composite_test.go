@@ -126,3 +126,5 @@ func (compositeTestScope) Value(context.Context, *state.Location) (interface{}, 
 	return nil, false, nil
 }
 func (compositeTestScope) BindTarget(context.Context, interface{}) error { return nil }
+
+func (compositeTestScope) Bind(context.Context, interface{}) error { return nil }

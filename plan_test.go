@@ -2,219 +2,216 @@ package bindly_test
 
 import (
 	"context"
-	"net/http/httptest"
-	"net/url"
+	"net/http"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/viant/bindly"
-	"github.com/viant/bindly/locator"
-	"github.com/viant/bindly/locator/buildin"
-	requestprovider "github.com/viant/bindly/provider/request"
+	"github.com/viant/bindly/provider/values"
 	"github.com/viant/bindly/state"
-	"github.com/viant/bindly/xform"
-	"github.com/viant/structology"
 )
 
-type sourceTypeProvider struct {
-	requested reflect.Type
-}
-
-func (p *sourceTypeProvider) Kind() string  { return "source_type" }
-func (p *sourceTypeProvider) Priority() int { return 0 }
-func (p *sourceTypeProvider) Locate(*structology.State) locator.Locator {
-	return &sourceTypeLocator{provider: p}
-}
-
-type sourceTypeLocator struct {
-	provider *sourceTypeProvider
-}
-
-func (l *sourceTypeLocator) Kind() string { return "source_type" }
-func (l *sourceTypeLocator) Value(_ context.Context, targetType reflect.Type, _ string) (interface{}, bool, error) {
-	l.provider.requested = targetType
-	return "red,green", true, nil
-}
-
-type sourceTypeTransformer struct {
-	calls int
-}
-
-func (t *sourceTypeTransformer) Transform(_ context.Context, _ locator.Resolver, value interface{}) (interface{}, error) {
-	t.calls++
-	return strings.Split(value.(string), ","), nil
-}
-
-var _ xform.Transformer = (*sourceTypeTransformer)(nil)
-
-func TestPlanBindUsesActiveRequestScope(t *testing.T) {
+func TestPlanScopedBinding(t *testing.T) {
 	type input struct {
-		Name string
-		IDs  []int
+		ID   int     `parameter:"identifier,kind=query,in=id,required=true"`
+		Name *string `bind:"Name,kind=query,in=name"`
 	}
-	root, err := bindly.NewInjector()
+	root, err := bindly.NewInjector(bindly.WithProviders(values.New("query", map[string]any{"name": "parent", "id": "1"})))
 	if err != nil {
-		t.Fatalf("NewInjector() error = %v", err)
+		t.Fatal(err)
 	}
-	plan, err := root.CompilePlan(reflect.TypeOf(input{}),
-		bindly.BindingSpec{Path: "Name", Location: state.Location{Kind: requestprovider.QueryKind, In: "name"}},
-		bindly.BindingSpec{Path: "IDs", Location: state.Location{Kind: requestprovider.QueryKind, In: "id"}},
-	)
+	plan, err := root.CompilePlan(reflect.TypeOf(input{}))
 	if err != nil {
-		t.Fatalf("CompilePlan() error = %v", err)
+		t.Fatal(err)
 	}
+	projection, err := plan.Projection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name   string
+		value  any
+		want   int
+		reject bool
+	}{{"typed", "7", 7, false}, {"invalid", "wrong", 0, true}, {"zero", 0, 0, false}} {
+		t.Run(tt.name, func(t *testing.T) {
+			scope, err := root.ForScope(values.New("query", map[string]any{"id": tt.value}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var actual input
+			err = scope.Bind(context.Background(), &actual, bindly.WithPlan(plan))
+			if tt.reject {
+				if err == nil {
+					t.Fatal("expected conversion error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if actual.ID != tt.want || actual.Name == nil || *actual.Name != "parent" {
+				t.Fatalf("input %+v", actual)
+			}
+			for _, name := range []string{"ID", "id", "identifier"} {
+				value, found, err := projection.Value(&actual, name)
+				if err != nil || !found || value != tt.want {
+					t.Fatalf("projection %s=%v %v %v", name, value, found, err)
+				}
+			}
+		})
+	}
+}
 
-	for _, testCase := range []struct {
-		name string
-		want string
-		ids  []string
-	}{
-		{name: "first", want: "parent", ids: []string{"1", "2"}},
-		{name: "second", want: "child", ids: []string{"7", "9"}},
+func TestPlanBindingTagAmbiguity(t *testing.T) {
+	field := reflect.TypeOf(struct {
+		ID int `bind:"kind=query,in=id" parameter:"kind=query,in=id"`
+	}{}).Field(0)
+	if _, _, err := bindly.BindingSpecFromField(field); err == nil {
+		t.Fatal("ambiguous binding accepted")
+	}
+}
+
+func TestBareRequiredTag(t *testing.T) {
+	field := reflect.TypeOf(struct {
+		ID int `parameter:"ID,kind=path,in=id,required"`
+	}{}).Field(0)
+	spec, found, err := bindly.BindingSpecFromField(field)
+	if err != nil || !found || spec.Required == nil || !*spec.Required {
+		t.Fatalf("spec %+v found %v err %v", spec, found, err)
+	}
+}
+
+func TestBindingQuotedScalars(t *testing.T) {
+	for _, tt := range []struct{ tag, want string }{
+		{`parameter:"Fields,kind=query,in=fields,value='id,name'"`, "id,name"},
+		{`parameter:"Fields,kind=query,in=fields,value='a\\'b,c'"`, "a'b,c"},
+		{`parameter:"Fields,kind=query,in=fields,value='a\\\\b,c'"`, `a\b,c`},
 	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/users", nil)
-			requestScope, err := requestprovider.New(req, requestprovider.WithQuery(url.Values{
-				"name": []string{testCase.want},
-				"id":   testCase.ids,
-			}))
-			if err != nil {
-				t.Fatalf("request.New() error = %v", err)
-			}
-			injector, err := root.ForScope(requestScope.Providers()...)
-			if err != nil {
-				t.Fatalf("ForScope() error = %v", err)
-			}
-			actual := &input{}
-			if err := injector.Bind(context.Background(), actual, bindly.WithPlan(plan)); err != nil {
-				t.Fatalf("Bind() error = %v", err)
-			}
-			if actual.Name != testCase.want {
-				t.Fatalf("Name = %q, want %q", actual.Name, testCase.want)
-			}
-			if !reflect.DeepEqual(actual.IDs, stringInts(testCase.ids)) {
-				t.Fatalf("IDs = %#v, want %#v", actual.IDs, stringInts(testCase.ids))
+		t.Run(tt.want, func(t *testing.T) {
+			spec, found, err := bindly.BindingSpecFromField(reflect.StructField{Name: "Fields", Type: reflect.TypeOf(""), Tag: reflect.StructTag(tt.tag)})
+			if err != nil || !found || spec.DefaultValue != tt.want {
+				t.Fatalf("value %#v found %v error %v", spec.DefaultValue, found, err)
 			}
 		})
 	}
 }
 
-func TestPlanRequestsSourceTypeBeforeTransformation(t *testing.T) {
+func TestSafeDynamicStructBinding(t *testing.T) {
+	type filters struct{ IDs *[]int }
+	targetType := reflect.StructOf([]reflect.StructField{{Name: "Filters", Type: reflect.TypeOf(filters{}), Tag: `bind:"kind=value,in=filters"`}})
+	ids := []int{13}
+	injector, err := bindly.NewInjector(bindly.WithProviders(values.New("value", map[string]any{"filters": filters{IDs: &ids}})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := reflect.New(targetType)
+	if err = injector.Bind(context.Background(), target.Interface()); err != nil {
+		t.Fatal(err)
+	}
+	actual := target.Elem().Field(0).Interface().(filters)
+	if actual.IDs == nil || !reflect.DeepEqual(*actual.IDs, ids) {
+		t.Fatalf("dynamic struct corrupted: %+v", actual)
+	}
+}
+
+func TestBindingAllocatesNilParents(t *testing.T) {
+	type nested struct{ Name string }
+	type target struct{ Nested *nested }
+	injector, _ := bindly.NewInjector(bindly.WithProviders(values.New("query", map[string]any{"name": "Alice"})))
+	plan, err := injector.CompilePlan(reflect.TypeOf(target{}), bindly.BindingSpec{Path: "Nested.Name", Location: state.Location{Kind: "query", In: "name"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var actual target
+	if err = injector.Bind(context.Background(), &actual, bindly.WithPlan(plan)); err != nil {
+		t.Fatal(err)
+	}
+	if actual.Nested == nil || actual.Nested.Name != "Alice" {
+		t.Fatalf("target %+v", actual)
+	}
+}
+
+func TestProjectionWithoutClearsValueAndMarker(t *testing.T) {
+	type has struct{ ID bool }
+	type target struct {
+		ID  int  `bind:"identifier,kind=query,in=id"`
+		Has *has `setMarker:"true"`
+	}
+	injector, _ := bindly.NewInjector()
+	plan, err := injector.CompilePlan(reflect.TypeOf(target{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := plan.Projection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := &target{ID: 7, Has: &has{ID: true}}
+	copy, err := projection.Without(input, "identifier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual := copy.(*target)
+	if actual.ID != 0 || actual.Has.ID || input.ID != 7 || !input.Has.ID {
+		t.Fatalf("copy %+v original %+v", actual, input)
+	}
+}
+
+func TestPlanTreatsRecursiveCapabilitiesAsOpaqueFields(t *testing.T) {
 	type input struct {
-		Values []string
+		Request *http.Request `bind:"kind=http_request"`
 	}
-	provider := &sourceTypeProvider{}
-	transformer := &sourceTypeTransformer{}
-	root, err := bindly.NewInjector(bindly.WithProviders(provider))
+	injector, err := bindly.NewInjector()
 	if err != nil {
-		t.Fatalf("NewInjector() error = %v", err)
+		t.Fatal(err)
 	}
-	plan, err := root.CompilePlan(reflect.TypeOf(input{}), bindly.BindingSpec{
-		Path:        "Values",
-		SourceType:  reflect.TypeOf(""),
-		Location:    state.Location{Kind: provider.Kind()},
-		Transformer: transformer,
-	})
+	plan, err := injector.CompilePlan(reflect.TypeOf(input{}))
 	if err != nil {
-		t.Fatalf("CompilePlan() error = %v", err)
+		t.Fatal(err)
 	}
-	actual := &input{}
-	if err := root.Bind(context.Background(), actual, bindly.WithPlan(plan)); err != nil {
-		t.Fatalf("Bind() error = %v", err)
+	projection, err := plan.Projection()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if provider.requested != reflect.TypeOf("") {
-		t.Fatalf("provider requested type = %v, want string", provider.requested)
-	}
-	if transformer.calls != 1 {
-		t.Fatalf("transformer calls = %d, want 1", transformer.calls)
-	}
-	if !reflect.DeepEqual(actual.Values, []string{"red", "green"}) {
-		t.Fatalf("Values = %#v", actual.Values)
+	request, _ := http.NewRequest("GET", "http://example.com", nil)
+	value, found, err := projection.Value(&input{Request: request}, "Request")
+	if err != nil || !found || value != request {
+		t.Fatalf("projection %v %v %v", value, found, err)
 	}
 }
 
-func TestPlanBindRejectsNarrowIntegerOverflow(t *testing.T) {
-	type input struct{ Limit int8 }
-	root, err := bindly.NewInjector()
+func TestBindingPreservesRecursiveHTTPRequestCapability(t *testing.T) {
+	request, _ := http.NewRequest("GET", "http://example.com", nil)
+	injector, err := bindly.NewInjector(bindly.WithProviders(values.New("http_request", map[string]any{"": request})))
 	if err != nil {
-		t.Fatalf("NewInjector() error = %v", err)
+		t.Fatal(err)
 	}
-	plan, err := root.CompilePlan(reflect.TypeOf(input{}), bindly.BindingSpec{
-		Path:     "Limit",
-		Location: state.Location{Kind: requestprovider.QueryKind, In: "limit"},
-	})
-	if err != nil {
-		t.Fatalf("CompilePlan() error = %v", err)
+	var input struct {
+		Request *http.Request `bind:"kind=http_request"`
 	}
-	req := httptest.NewRequest("GET", "/?limit=128", nil)
-	requestScope, err := requestprovider.New(req)
-	if err != nil {
-		t.Fatalf("request.New() error = %v", err)
+	if err = injector.Bind(context.Background(), &input); err != nil {
+		t.Fatal(err)
 	}
-	injector, err := root.ForScope(requestScope.Providers()...)
-	if err != nil {
-		t.Fatalf("ForScope() error = %v", err)
-	}
-	if err := injector.Bind(context.Background(), &input{}, bindly.WithPlan(plan)); err == nil {
-		t.Fatal("expected overflow error")
+	if input.Request != request {
+		t.Fatal("request pointer was not preserved")
 	}
 }
 
-func TestCompilePlanValidation(t *testing.T) {
-	type input struct{ Name string }
-	root, err := bindly.NewInjector()
+func TestExplicitEmptyPlanDisablesTaggedBinding(t *testing.T) {
+	type input struct {
+		ID int `parameter:"ID,kind=path,in=id,required=true"`
+	}
+	injector, err := bindly.NewInjector()
 	if err != nil {
-		t.Fatalf("NewInjector() error = %v", err)
+		t.Fatal(err)
 	}
-	tests := []struct {
-		name string
-		spec bindly.BindingSpec
-	}{
-		{name: "missing path", spec: bindly.BindingSpec{Location: state.Location{Kind: "query"}}},
-		{name: "unknown path", spec: bindly.BindingSpec{Path: "Missing", Location: state.Location{Kind: "query"}}},
-		{name: "missing kind", spec: bindly.BindingSpec{Path: "Name"}},
-	}
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			if _, err := root.CompilePlan(reflect.TypeOf(input{}), testCase.spec); err == nil {
-				t.Fatal("expected plan validation error")
-			}
-		})
-	}
-}
-
-func TestExplicitStatePlanRequiresSource(t *testing.T) {
-	type input struct{ Name string }
-	root, err := bindly.NewInjector(bindly.WithProviders(buildin.Struct("state", "", 1)))
+	empty := make([]bindly.BindingSpec, 0)
+	plan, err := injector.CompilePlan(reflect.TypeOf(input{}), empty...)
 	if err != nil {
-		t.Fatalf("NewInjector() error = %v", err)
+		t.Fatal(err)
 	}
-	plan, err := root.CompilePlan(reflect.TypeOf(input{}), bindly.BindingSpec{
-		Path: "Name", Location: state.Location{Kind: "state", In: "Name"},
-	})
-	if err != nil {
-		t.Fatalf("CompilePlan() error = %v", err)
+	if err = injector.Bind(context.Background(), &input{}, bindly.WithPlan(plan)); err != nil {
+		t.Fatalf("inactive binding restored from tags: %v", err)
 	}
-	err = root.Bind(context.Background(), &input{}, bindly.WithPlan(plan))
-	if err == nil || !strings.Contains(err.Error(), "use WithSource") {
-		t.Fatalf("Bind() error = %v, want missing source guidance", err)
-	}
-	actual := &input{}
-	if err := root.Bind(context.Background(), actual, bindly.WithPlan(plan), bindly.WithSource(&input{Name: "Ada"})); err != nil {
-		t.Fatalf("Bind() with source error = %v", err)
-	}
-	if actual.Name != "Ada" {
-		t.Fatalf("Name = %q, want Ada", actual.Name)
-	}
-}
-
-func stringInts(values []string) []int {
-	result := make([]int, len(values))
-	for i, value := range values {
-		for _, digit := range value {
-			result[i] = result[i]*10 + int(digit-'0')
-		}
-	}
-	return result
 }
