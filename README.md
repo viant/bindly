@@ -194,6 +194,20 @@ fallback. Layer names must be nonempty and unique; every layer must supply the
 same kind. The composed priority is the maximum layer priority, and default
 caching requires every layer to permit it.
 
+## Trusted resolved input
+
+`WithResolvedInput(plan, input, paths...)` imports selected canonical destination
+values for one binding target. Supply the identical compiled plan through
+`WithPlan` and a nonnil input of the exact target pointer type. This is trusted
+internal input, not a transport replay or provider-cache override. The selected
+graph is cloned; callers must not mutate the source during capture. Unknown or
+duplicate paths, incompatible types and replay combinations fail before binding.
+
+Normal ordering and conditions still run. Selected values bypass provider lookup,
+conversion, defaults and transforms, then follow ordinary validation, assignment,
+presence-marker and observer processing. Unselected fields bind normally. Seeded
+observer metadata is nil; this option creates no authorization provenance.
+
 ## Projection, Metadata and Replay
 
 `Plan.Projection` exposes selected bindings under their canonical names or

@@ -23,6 +23,8 @@ type bindOptions struct {
 	cache         *ValueCache
 	observer      BindingObserver
 	replay        *ReplayBinding
+	resolvedInput *resolvedInput
+	resolvedError error
 	allowedKinds  map[string]bool
 	delayedKinds  map[string]bool
 	strictMissing bool
@@ -58,6 +60,10 @@ func (i *Injector) Bind(ctx context.Context, target any, options ...BindOption) 
 			option(settings)
 		}
 	}
+	resolved, err := prepareResolvedInput(settings, target)
+	if err != nil {
+		return err
+	}
 	if settings.replay != nil && settings.replay.Replay == nil {
 		return fmt.Errorf("replay values are required")
 	}
@@ -70,7 +76,7 @@ func (i *Injector) Bind(ctx context.Context, target any, options ...BindOption) 
 	if settings.cache == i.valueCache && (source != nil || settings.observer != nil) {
 		settings.cache = nil
 	}
-	invocation := &invocation{injector: i, active: map[string]bool{}, cache: map[resolutionKey]resolution{}, persistent: settings.cache, observer: settings.observer, replay: settings.replay, replayTarget: target, allowedKinds: settings.allowedKinds, delayedKinds: settings.delayedKinds, strictMissing: settings.strictMissing}
+	invocation := &invocation{injector: i, active: map[string]bool{}, cache: map[resolutionKey]resolution{}, persistent: settings.cache, observer: settings.observer, replay: settings.replay, replayTarget: target, resolved: resolved, resolvedTarget: target, allowedKinds: settings.allowedKinds, delayedKinds: settings.delayedKinds, strictMissing: settings.strictMissing}
 	if source != nil {
 		invocation.source = structology.NewStateType(reflect.TypeOf(source)).WithValue(source)
 		if settings.source != nil {
@@ -100,6 +106,8 @@ type invocation struct {
 	observer       BindingObserver
 	replay         *ReplayBinding
 	replayTarget   any
+	resolved       map[string]any
+	resolvedTarget any
 	sourceIdentity string
 	allowedKinds   map[string]bool
 	delayedKinds   map[string]bool
@@ -217,7 +225,11 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 		if replaying {
 			selectedBinding, selected = s.replay.Replay.plan.fields[binding.Path]
 		}
-		if selected {
+		if supplied, ok := s.resolved[binding.Path]; ok && s.resolvedTarget == target {
+			result = resolution{value: supplied, found: true}
+			preparedValue = true
+			sourceType = targetType
+		} else if selected {
 			if prepared, ok := s.replay.Replay.prepared[binding.Path]; ok {
 				result.value, err = (xshape.Runtime{}).CloneValue(prepared.value)
 				result.found = prepared.found
