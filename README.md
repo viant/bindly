@@ -208,6 +208,13 @@ conversion, defaults and transforms, then follow ordinary validation, assignment
 presence-marker and observer processing. Unselected fields bind normally. Seeded
 observer metadata is nil; this option creates no authorization provenance.
 
+The clone retains shared references within the selected data graph while
+detaching supported mutable data from the caller. Unsupported mutable values
+fail capture. Presence selects explicitly supplied zero values as well as nonzero
+values; it does not infer authorization or turn the seed into a shared cache.
+See [resolved-input tests](resolved_input_test.go) for ordering, isolation and
+concurrent binding examples.
+
 ## Projection, Metadata and Replay
 
 `Plan.Projection` exposes selected bindings under their canonical names or
