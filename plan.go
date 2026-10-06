@@ -14,6 +14,7 @@ import (
 
 // Plan contains only immutable target metadata; providers are resolved per bind.
 type Plan struct {
+	groups   []ResolutionGroupPlan
 	target   reflect.Type
 	bindings []BindingSpec
 	fields   map[string]field.Access
@@ -123,6 +124,9 @@ func (i *Injector) CompilePlan(target reflect.Type, specs ...BindingSpec) (*Plan
 			return nil, fmt.Errorf("binding %s: %w", spec.Path, err)
 		}
 		plan.bindings = append(plan.bindings, spec)
+	}
+	if err := plan.compileResolutionGroups(); err != nil {
+		return nil, err
 	}
 	return plan, nil
 }

@@ -18,16 +18,17 @@ import (
 
 type BindOption func(*bindOptions)
 type bindOptions struct {
-	plan          *Plan
-	source        any
-	cache         *ValueCache
-	observer      BindingObserver
-	replay        *ReplayBinding
-	resolvedInput *resolvedInput
-	resolvedError error
-	allowedKinds  map[string]bool
-	delayedKinds  map[string]bool
-	strictMissing bool
+	groupController ResolutionGroupController
+	plan            *Plan
+	source          any
+	cache           *ValueCache
+	observer        BindingObserver
+	replay          *ReplayBinding
+	resolvedInput   *resolvedInput
+	resolvedError   error
+	allowedKinds    map[string]bool
+	delayedKinds    map[string]bool
+	strictMissing   bool
 }
 
 func WithPlan(plan *Plan) BindOption   { return func(o *bindOptions) { o.plan = plan } }
@@ -76,7 +77,7 @@ func (i *Injector) Bind(ctx context.Context, target any, options ...BindOption) 
 	if settings.cache == i.valueCache && (source != nil || settings.observer != nil) {
 		settings.cache = nil
 	}
-	invocation := &invocation{injector: i, active: map[string]bool{}, cache: map[resolutionKey]resolution{}, persistent: settings.cache, observer: settings.observer, replay: settings.replay, replayTarget: target, resolved: resolved, resolvedTarget: target, allowedKinds: settings.allowedKinds, delayedKinds: settings.delayedKinds, strictMissing: settings.strictMissing}
+	invocation := &invocation{groupController: settings.groupController, injector: i, active: map[string]bool{}, cache: map[resolutionKey]resolution{}, persistent: settings.cache, observer: settings.observer, replay: settings.replay, replayTarget: target, resolved: resolved, resolvedTarget: target, allowedKinds: settings.allowedKinds, delayedKinds: settings.delayedKinds, strictMissing: settings.strictMissing}
 	if source != nil {
 		invocation.source = structology.NewStateType(reflect.TypeOf(source)).WithValue(source)
 		if settings.source != nil {
@@ -97,21 +98,23 @@ func (i *Injector) Bind(ctx context.Context, target any, options ...BindOption) 
 }
 
 type invocation struct {
-	captureSources bool
-	injector       *Injector
-	source         *structology.State
-	active         map[string]bool
-	cache          map[resolutionKey]resolution
-	persistent     *ValueCache
-	observer       BindingObserver
-	replay         *ReplayBinding
-	replayTarget   any
-	resolved       map[string]any
-	resolvedTarget any
-	sourceIdentity string
-	allowedKinds   map[string]bool
-	delayedKinds   map[string]bool
-	strictMissing  bool
+	groupSource     func() *structology.State
+	groupController ResolutionGroupController
+	captureSources  bool
+	injector        *Injector
+	source          *structology.State
+	active          map[string]bool
+	cache           map[resolutionKey]resolution
+	persistent      *ValueCache
+	observer        BindingObserver
+	replay          *ReplayBinding
+	replayTarget    any
+	resolved        map[string]any
+	resolvedTarget  any
+	sourceIdentity  string
+	allowedKinds    map[string]bool
+	delayedKinds    map[string]bool
+	strictMissing   bool
 }
 
 type resolutionKey struct {
@@ -144,6 +147,9 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 	}
 	if targetValue.Elem().Type() != plan.target {
 		return fmt.Errorf("binding plan targets %v, got %T", plan.target, target)
+	}
+	if len(plan.groups) != 0 {
+		return s.bindWithGroups(ctx, target, plan)
 	}
 	bindings := append([]BindingSpec(nil), plan.bindings...)
 	sort.SliceStable(bindings, func(i, j int) bool {
@@ -398,7 +404,11 @@ func (s *invocation) resolveBindingResult(ctx context.Context, location *state.L
 				}
 			}
 		}
-		valueLocator := provider.Locate(s.source)
+		sourceState := s.source
+		if s.groupSource != nil {
+			sourceState = s.groupSource()
+		}
+		valueLocator := provider.Locate(sourceState)
 		if valueLocator == nil {
 			if s.source == nil {
 				return resolution{}, fmt.Errorf("binding provider %q requires source state; use WithSource", location.Kind)
