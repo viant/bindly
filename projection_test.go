@@ -109,3 +109,68 @@ func TestPlanProjectionDoesNotExposeParamDependencySourceAsAlias(t *testing.T) {
 		t.Fatalf("Value(Events) = ok %v, err %v; want unknown alias", ok, err)
 	}
 }
+
+func TestPlanProjectionTransportAmbiguityIsOrderIndependent(t *testing.T) {
+	type target struct {
+		FormAction  string
+		QueryAction string
+		AccountID   string
+		AlternateID string
+	}
+	specs := []BindingSpec{
+		{Path: "FormAction", Name: "FormAction", Location: state.Location{Kind: "form", In: "action"}},
+		{Path: "QueryAction", Name: "QueryAction", Location: state.Location{Kind: "query", In: "action"}},
+		{Path: "AccountID", Location: state.Location{Kind: "form", In: "account_id"}},
+		{Path: "AlternateID", Location: state.Location{Kind: "query", In: "AccountID"}},
+	}
+	for _, reverse := range []bool{false, true} {
+		ordered := append([]BindingSpec(nil), specs...)
+		if reverse {
+			for i, j := 0, len(ordered)-1; i < j; i, j = i+1, j-1 {
+				ordered[i], ordered[j] = ordered[j], ordered[i]
+			}
+		}
+		injector, _ := NewInjector()
+		plan, err := injector.CompilePlan(reflect.TypeOf(target{}), ordered...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		projection, err := plan.Projection()
+		if err != nil {
+			t.Fatal(err)
+		}
+		input := &target{FormAction: "form", QueryAction: "query", AccountID: "canonical", AlternateID: "other"}
+		for name, want := range map[string]string{"FormAction": "form", "QueryAction": "query", "AccountID": "canonical", "account_id": "canonical"} {
+			value, ok, err := projection.Value(input, name)
+			if err != nil || !ok || value != want {
+				t.Fatalf("reverse=%v Value(%s)=%v,%v,%v", reverse, name, value, ok, err)
+			}
+		}
+		if _, ok, err := projection.Value(input, "action"); err != nil || ok {
+			t.Fatalf("ambiguous alias exposed: %v %v", ok, err)
+		}
+		if _, err := projection.Without(input, "action"); err == nil {
+			t.Fatal("ambiguous alias accepted by Without")
+		}
+		if input.FormAction != "form" || input.QueryAction != "query" {
+			t.Fatal("input changed")
+		}
+	}
+}
+
+func TestPlanProjectionRejectsConflictingLogicalNames(t *testing.T) {
+	type target struct {
+		First  string
+		Second string
+	}
+	injector, _ := NewInjector()
+	plan, err := injector.CompilePlan(reflect.TypeOf(target{}),
+		BindingSpec{Path: "First", Name: "logical", Location: state.Location{Kind: "form", In: "value"}},
+		BindingSpec{Path: "Second", Name: "logical", Location: state.Location{Kind: "query", In: "value"}})
+	if err != nil {
+		return
+	} // CompilePlan may reject the canonical conflict earlier.
+	if _, err = plan.Projection(); err == nil {
+		t.Fatal("conflicting logical names accepted")
+	}
+}

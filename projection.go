@@ -63,9 +63,6 @@ func (p *Plan) Projection(fields ...ProjectionField) (*Projection, error) {
 			result.markers[binding.Path] = binding.MarkerField
 		}
 		names := []string{binding.Path, binding.Name}
-		if !strings.EqualFold(binding.Location.Kind, "param") {
-			names = append(names, binding.Location.In)
-		}
 		for _, name := range names {
 			if err := add(name, binding.Path); err != nil {
 				return nil, err
@@ -83,6 +80,31 @@ func (p *Plan) Projection(fields ...ProjectionField) (*Projection, error) {
 			if err := add(name, field.Path); err != nil {
 				return nil, err
 			}
+		}
+	}
+	// Transport locations are inferred aliases, not canonical field names.
+	// Collect them after explicit names so provider order cannot choose a winner.
+	transport := map[string]string{}
+	ambiguous := map[string]bool{}
+	for _, binding := range p.bindings {
+		if strings.EqualFold(strings.TrimSpace(binding.Location.Kind), "param") {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(binding.Location.In))
+		if name == "" {
+			continue
+		}
+		if previous, ok := transport[name]; ok && previous != binding.Path {
+			ambiguous[name] = true
+		}
+		transport[name] = binding.Path
+	}
+	for name, path := range transport {
+		if _, canonical := result.paths[name]; canonical || ambiguous[name] {
+			continue
+		}
+		if err := add(name, path); err != nil {
+			return nil, err
 		}
 	}
 	return result, nil
