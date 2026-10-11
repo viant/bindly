@@ -1,0 +1,395 @@
+[
+  {
+    "raw": "{\"value\":\"2026-10-11 17:28:39\",\"pointer\":\"2026-10-11 17:28:39\"}",
+    "value": "2026-10-11T17:28:39Z",
+    "pointer": "2026-10-11T17:28:39Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11T17:28:39Z\",\"pointer\":\"2026-10-11T17:28:39Z\"}",
+    "value": "2026-10-11T17:28:39Z",
+    "pointer": "2026-10-11T17:28:39Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11T17:28:39\",\"pointer\":\"2026-10-11T17:28:39\"}",
+    "value": "2026-10-11T17:28:39Z",
+    "pointer": "2026-10-11T17:28:39Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11\",\"pointer\":\"2026-10-11\"}",
+    "value": "2026-10-11T00:00:00Z",
+    "pointer": "2026-10-11T00:00:00Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11-07:00\",\"pointer\":\"2026-10-11-07:00\"}",
+    "value": "2026-10-11T00:00:00Z",
+    "pointer": "2026-10-11T00:00:00Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11T17:28:39+07:00\",\"pointer\":\"2026-10-11T17:28:39+07:00\"}",
+    "value": "2026-10-11T17:28:39+07:00",
+    "pointer": "2026-10-11T17:28:39+07:00",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11T17:28:39-07:00\",\"pointer\":\"2026-10-11T17:28:39-07:00\"}",
+    "value": "2026-10-11T17:28:39-07:00",
+    "pointer": "2026-10-11T17:28:39-07:00",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11T17:28:39.123456789+05:30\",\"pointer\":\"2026-10-11T17:28:39.123456789+05:30\"}",
+    "value": "2026-10-11T17:28:39.123456789+05:30",
+    "pointer": "2026-10-11T17:28:39.123456789+05:30",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11 17:28:39.123456789\",\"pointer\":\"2026-10-11 17:28:39.123456789\"}",
+    "value": "2026-10-11T17:28:39.123456789Z",
+    "pointer": "2026-10-11T17:28:39.123456789Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11T17:28:39ZZZ\",\"pointer\":\"2026-10-11T17:28:39ZZZ\"}",
+    "value": "2026-10-11T17:28:39Z",
+    "pointer": "2026-10-11T17:28:39Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11 17:28\",\"pointer\":\"2026-10-11 17:28\"}",
+    "value": "2026-10-11T17:28:00Z",
+    "pointer": "2026-10-11T17:28:00Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11 17\",\"pointer\":\"2026-10-11 17\"}",
+    "value": "2026-10-11T17:00:00Z",
+    "pointer": "2026-10-11T17:00:00Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10\",\"pointer\":\"2026-10\"}",
+    "value": "2026-10-01T00:00:00Z",
+    "pointer": "2026-10-01T00:00:00Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026\",\"pointer\":\"2026\"}",
+    "value": "2026-01-01T00:00:00Z",
+    "pointer": "2026-01-01T00:00:00Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"\",\"pointer\":\"\"}",
+    "value": "0000-01-01T00:00:00Z",
+    "pointer": "0000-01-01T00:00:00Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"0001-01-01T00:00:00Z\",\"pointer\":\"0001-01-01T00:00:00Z\"}",
+    "value": "0001-01-01T00:00:00Z",
+    "pointer": null,
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"0001-01-01 00:00:00\",\"pointer\":\"0001-01-01 00:00:00\"}",
+    "value": "0001-01-01T00:00:00Z",
+    "pointer": null,
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"0000-01-01T00:00:00Z\",\"pointer\":\"0000-01-01T00:00:00Z\"}",
+    "value": "0000-01-01T00:00:00Z",
+    "pointer": "0000-01-01T00:00:00Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-99-11T17:28:39Z\",\"pointer\":\"2026-99-11T17:28:39Z\"}",
+    "value": "2026-01-01T00:00:00Z",
+    "pointer": "2026-01-01T00:00:00Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"nonsense\",\"pointer\":\"nonsense\"}",
+    "value": "0000-01-01T00:00:00Z",
+    "pointer": "0000-01-01T00:00:00Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11T17:28:39bad\",\"pointer\":\"2026-10-11T17:28:39bad\"}",
+    "value": "2026-10-11T17:28:39Z",
+    "pointer": "2026-10-11T17:28:39Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11T17:28:39+00\",\"pointer\":\"2026-10-11T17:28:39+00\"}",
+    "value": "2026-10-11T17:28:39Z",
+    "pointer": "2026-10-11T17:28:39Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11T17:28:39+0530\",\"pointer\":\"2026-10-11T17:28:39+0530\"}",
+    "value": "2026-10-11T17:28:39+05:00",
+    "pointer": "2026-10-11T17:28:39+05:00",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11T17:28:39+05:45\",\"pointer\":\"2026-10-11T17:28:39+05:45\"}",
+    "value": "2026-10-11T17:28:39+05:45",
+    "pointer": "2026-10-11T17:28:39+05:45",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11T17:28:39.1Z\",\"pointer\":\"2026-10-11T17:28:39.1Z\"}",
+    "value": "2026-10-11T17:28:39.1Z",
+    "pointer": "2026-10-11T17:28:39.1Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11T17:28:39,123Z\",\"pointer\":\"2026-10-11T17:28:39,123Z\"}",
+    "value": "2026-10-11T17:28:39Z",
+    "pointer": "2026-10-11T17:28:39Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11T17:28:39Zjunk\",\"pointer\":\"2026-10-11T17:28:39Zjunk\"}",
+    "error": "failed to unmarshal value, parsing time \"2026-10-11T17:28:39Zju\" as \"2006-01-02-07:00\": cannot parse \"T17:28:39Zju\" as \"-07:00\"",
+    "value": "0001-01-01T00:00:00Z",
+    "pointer": null,
+    "has": {
+      "Value": false,
+      "Pointer": false
+    }
+  },
+  {
+    "raw": "{\"value\":\"Z\",\"pointer\":\"Z\"}",
+    "value": "0000-01-01T00:00:00Z",
+    "pointer": "0000-01-01T00:00:00Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"123\",\"pointer\":\"123\"}",
+    "panic": "runtime error: slice bounds out of range [:23] with length 3",
+    "value": "0001-01-01T00:00:00Z",
+    "pointer": null,
+    "has": {
+      "Value": false,
+      "Pointer": false
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-01-01T\",\"pointer\":\"2026-01-01T\"}",
+    "value": "2026-01-01T00:00:00Z",
+    "pointer": "2026-01-01T00:00:00Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-01-01 25:60:61\",\"pointer\":\"2026-01-01 25:60:61\"}",
+    "value": "2026-01-01T00:00:00Z",
+    "pointer": "2026-01-01T00:00:00Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11+05:30\",\"pointer\":\"2026-10-11+05:30\"}",
+    "value": "2026-10-11T00:00:00Z",
+    "pointer": "2026-10-11T00:00:00Z",
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{}",
+    "value": "0001-01-01T00:00:00Z",
+    "pointer": null,
+    "has": {
+      "Value": false,
+      "Pointer": false
+    }
+  },
+  {
+    "raw": "{\"value\":null,\"pointer\":null}",
+    "value": "0000-01-01T00:00:00Z",
+    "pointer": null,
+    "has": {
+      "Value": true,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":123,\"pointer\":123}",
+    "error": "failed to unmarshal value, Cannot unmarshal JSON to type '*string'",
+    "value": "0000-01-01T00:00:00Z",
+    "pointer": null,
+    "has": {
+      "Value": true,
+      "Pointer": false
+    }
+  },
+  {
+    "raw": "{\"value\":{},\"pointer\":{}}",
+    "error": "failed to unmarshal value, Cannot unmarshal JSON to type '*string'",
+    "value": "0000-01-01T00:00:00Z",
+    "pointer": null,
+    "has": {
+      "Value": true,
+      "Pointer": false
+    }
+  },
+  {
+    "raw": "{\"value\":[],\"pointer\":[]}",
+    "error": "failed to unmarshal value, Cannot unmarshal JSON to type '*string'",
+    "value": "0000-01-01T00:00:00Z",
+    "pointer": null,
+    "has": {
+      "Value": true,
+      "Pointer": false
+    }
+  },
+  {
+    "raw": "{\"value\":true,\"pointer\":true}",
+    "error": "failed to unmarshal value, Cannot unmarshal JSON to type '*string'",
+    "value": "0000-01-01T00:00:00Z",
+    "pointer": null,
+    "has": {
+      "Value": true,
+      "Pointer": false
+    }
+  },
+  {
+    "raw": "{\"pointer\":\"2026-10-11 17:28:39\",\"pointer\":\"0001-01-01T00:00:00Z\"}",
+    "value": "0001-01-01T00:00:00Z",
+    "pointer": "2026-10-11T17:28:39Z",
+    "has": {
+      "Value": false,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"pointer\":\"2026-10-11 17:28:39\",\"pointer\":null}",
+    "value": "0001-01-01T00:00:00Z",
+    "pointer": "2026-10-11T17:28:39Z",
+    "has": {
+      "Value": false,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"value\":\"2026-10-11 17:28:39\",\"value\":null}",
+    "value": "0000-01-01T00:00:00Z",
+    "pointer": null,
+    "has": {
+      "Value": true,
+      "Pointer": false
+    }
+  },
+  {
+    "raw": "{\"pointer\":\"0001-01-01T00:00:00Z\",\"Pointer\":\"2026-10-11 17:28:39\"}",
+    "value": "0001-01-01T00:00:00Z",
+    "pointer": "2026-10-11T17:28:39Z",
+    "has": {
+      "Value": false,
+      "Pointer": true
+    }
+  },
+  {
+    "raw": "{\"pointer\":\"nonsense\",\"pointer\":\"2026-10-11 17:28:39\"}",
+    "value": "0001-01-01T00:00:00Z",
+    "pointer": "2026-10-11T17:28:39Z",
+    "has": {
+      "Value": false,
+      "Pointer": true
+    }
+  }
+]

@@ -8,7 +8,8 @@ import (
 	"strings"
 )
 
-// DecodePublic excludes canonical internal members before invoking JSON decoders.
+// DecodePublic filters canonical internal members and normalizes default dates
+// before the existing typed JSON decoder and presence reconstruction.
 func DecodePublic(raw []byte, target reflect.Type) (any, error) { return decode(raw, target, true) }
 
 // VerifyTypedRoundtrip reconstructs only Replay.encodeField's immediately preceding
@@ -32,7 +33,7 @@ func decode(raw []byte, target reflect.Type, public bool) (any, error) {
 		return append(json.RawMessage(nil), raw...), nil
 	}
 	if public {
-		filtered, err := excludeInternal(raw, target)
+		filtered, err := filterPublic(raw, target, true)
 		if err != nil {
 			return nil, &input.Error{Cause: err}
 		}
