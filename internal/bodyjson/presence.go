@@ -13,6 +13,11 @@ import (
 // JSON decoding remains encoding/json's responsibility; this traversal only
 // projects source presence onto its already-decoded typed object graph.
 func MarkPresence(target reflect.Value, raw json.RawMessage, public bool) error {
+	// Match filtering's ownership boundary before resetting markers or walking
+	// children: custom decoders may derive sparse flags from aliases and nulls.
+	if target.IsValid() && ownsJSONRepresentation(target.Type()) {
+		return nil
+	}
 	for target.IsValid() && target.Kind() == reflect.Pointer {
 		if target.IsNil() {
 			return nil

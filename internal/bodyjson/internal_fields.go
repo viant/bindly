@@ -102,15 +102,7 @@ func buildInternalPlan(target reflect.Type, memo map[reflect.Type]*internalPlan)
 		memo[original] = plan
 		return plan, nil
 	}
-	for candidate := original; ; candidate = candidate.Elem() {
-		if candidate.Implements(reflect.TypeFor[json.Unmarshaler]()) || candidate.Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) {
-			return nil, nil
-		}
-		if candidate.Kind() != reflect.Pointer {
-			break
-		}
-	}
-	if reflect.PointerTo(target).Implements(reflect.TypeFor[json.Unmarshaler]()) || reflect.PointerTo(target).Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) {
+	if ownsJSONRepresentation(original) {
 		return nil, nil
 	}
 	plan := &internalPlan{kind: target.Kind(), pointer: original.Kind() == reflect.Pointer}
@@ -356,4 +348,22 @@ func (p *internalPlan) filterObject(raw []byte, normalizeDates bool, dates *date
 		result = append(result, member...)
 	}
 	return append(result, raw[closing:]...), nil
+}
+
+// ownsJSONRepresentation is shared by filtering and presence reconstruction:
+// an authored decoder owns the entire representation of its decoded subtree.
+func ownsJSONRepresentation(target reflect.Type) bool {
+	if target == nil {
+		return false
+	}
+	for {
+		if target.Implements(reflect.TypeFor[json.Unmarshaler]()) || target.Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) {
+			return true
+		}
+		if target.Kind() != reflect.Pointer {
+			break
+		}
+		target = target.Elem()
+	}
+	return reflect.PointerTo(target).Implements(reflect.TypeFor[json.Unmarshaler]()) || reflect.PointerTo(target).Implements(reflect.TypeFor[encoding.TextUnmarshaler]())
 }
