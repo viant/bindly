@@ -256,11 +256,16 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 			result.found = true
 			result.metadata = nil
 		}
+		var absent *requiredAbsenceError
 		if s.strictMissing && err == nil && (!result.found || nilValue(result.value)) && binding.Required != nil && *binding.Required {
-			err = binding.inputError(fmt.Errorf("missing required %s value %q", binding.Location.Kind, binding.Location.In))
+			absent, err = binding.requiredAbsence()
 		}
 		if err != nil {
-			return &BindingError{Path: binding.Path, Name: binding.Name, Kind: binding.Location.Kind, In: binding.Location.In, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
+			failure := &BindingError{Path: binding.Path, Name: binding.Name, Kind: binding.Location.Kind, In: binding.Location.In, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
+			if absent != nil {
+				absent.owner = failure
+			}
+			return failure
 		}
 		if !result.found {
 			if err := binding.validateRecordCount(nil); err != nil {
@@ -490,6 +495,9 @@ func (e *BindingError) Error() string {
 			cause = invalid.Cause
 		}
 		return strings.ReplaceAll(e.Message, "${error}", fmt.Sprint(cause))
+	}
+	if message, ok := e.requiredAbsenceMessage(); ok {
+		return message
 	}
 	var invalid *input.Error
 	if errors.As(e.Unwrap(), &invalid) {
