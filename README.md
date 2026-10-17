@@ -200,7 +200,12 @@ caching requires every layer to permit it.
 values for one binding target. Supply the identical compiled plan through
 `WithPlan` and a nonnil input of the exact target pointer type. This is trusted
 internal input, not a transport replay or provider-cache override. The selected
-graph is cloned; callers must not mutate the source during capture. Unknown or
+ordinary data graph is cloned; callers must not mutate it during capture.
+Selected unscoped, cacheable `component` pointer bindings retain their exact
+reference, including private data. Their caller owns validation of component
+identity and capability admission. Caller and receiver must treat these borrowed
+outputs as read-only throughout the invocation, with no concurrent mutation.
+This does not add a provider override or shared cache. Unknown or
 duplicate paths, incompatible types and replay combinations fail before binding.
 
 Normal ordering and conditions still run. Selected values bypass provider lookup,
@@ -212,7 +217,11 @@ The clone retains shared references within the selected data graph while
 detaching supported mutable data from the caller. Unsupported mutable values
 fail capture. Presence selects explicitly supplied zero values as well as nonzero
 values; it does not infer authorization or turn the seed into a shared cache.
-See [resolved-input tests](resolved_input_test.go) for ordering, isolation and
+For example, a canonical `Auth` component binding in
+`WithResolvedInput(plan, input, "Auth", "Rows")` retains `input.Auth` while
+detaching ordinary `Rows`. An absent component path still resolves normally.
+See [component reference tests](resolved_component_test.go) for read-only sharing,
+and [resolved-input tests](resolved_input_test.go) for ordering, isolation and
 concurrent binding examples.
 
 ## Projection, Metadata and Replay

@@ -200,3 +200,28 @@ func TestRequiredAbsenceDoesNotReclassifyConversionOrChildFailure(t *testing.T) 
 		}
 	}
 }
+
+func TestRequiredAbsenceMessageAccessorOwnership(t *testing.T) {
+	for _, literal := range []string{"", "authored safe text", "policy ${error}"} {
+		b := requiredBinding("header")
+		b.ErrorCode = 401
+		b.ErrorMessage = literal
+		_, err := bindAbsence(t, b, values.New("header", map[string]any{}))
+		var owner *bindly.BindingError
+		if !errors.As(err, &owner) {
+			t.Fatal("owner missing")
+		}
+		if text, ok := owner.RequiredAbsenceMessage(); !ok || text != "parameter Jwt is required" {
+			t.Fatal("genuine absence accessor failed")
+		}
+		if literal != "" && literal != "policy ${error}" && owner.Error() != literal {
+			t.Fatal("authored precedence changed")
+		}
+		clone := *owner
+		for _, candidate := range []*bindly.BindingError{nil, {Cause: (*input.Error)(nil)}, &clone, {Name: "Parent", Kind: "component", Cause: owner}, {Name: "Reused", Cause: owner.Unwrap()}, {Name: "Conversion", Cause: &input.Error{Cause: errors.New("private")}}, {Name: "Verification", Cause: errors.New("private")}} {
+			if _, ok := candidate.RequiredAbsenceMessage(); ok {
+				t.Fatal("foreign or copied owner admitted")
+			}
+		}
+	}
+}

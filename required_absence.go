@@ -31,11 +31,11 @@ func (e *BindingError) requiredAbsenceMessage() (string, bool) {
 	// Direct cause and owner identity refer only to this binding's absence event.
 	// Do not traverse dependency errors or alter BindingError's public shape.
 	invalid, ok := e.Unwrap().(*input.Error)
-	if !ok {
+	if !ok || invalid == nil {
 		return "", false
 	}
 	absent, ok := invalid.Cause.(*requiredAbsenceError)
-	if !ok || absent.owner != e {
+	if !ok || absent == nil || absent.owner != e {
 		return "", false
 	}
 	name := e.Name
@@ -43,4 +43,14 @@ func (e *BindingError) requiredAbsenceMessage() (string, bool) {
 		name = e.Path
 	}
 	return fmt.Sprintf("parameter %s is required", name), true
+}
+
+// RequiredAbsenceMessage returns safe text only for this binding's own typed
+// absence event. It never traverses dependency failures or formats private causes.
+// Callers must preserve authored Message precedence.
+func (e *BindingError) RequiredAbsenceMessage() (string, bool) {
+	if e == nil {
+		return "", false
+	}
+	return e.requiredAbsenceMessage()
 }
