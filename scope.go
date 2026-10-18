@@ -247,6 +247,8 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 		} else {
 			result, err = s.resolveBindingResult(ctx, &binding.Location, sourceType, binding.Cacheable, binding.BodyNullPolicy)
 		}
+		// A default must not turn an absent source into a present-null diagnostic.
+		sourcePresent := result.found
 		if !preparedValue && err == nil && !result.found && binding.DefaultValue != nil {
 			var defaultValue any
 			defaultValue, err = (xshape.Runtime{}).CloneValue(binding.DefaultValue)
@@ -258,7 +260,17 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 		}
 		var absent *requiredAbsenceError
 		if s.strictMissing && err == nil && (!result.found || nilValue(result.value)) && binding.Required != nil && *binding.Required {
-			absent, err = binding.requiredAbsence()
+			collectionSource := sourceType
+			for collectionSource != nil && collectionSource.Kind() == reflect.Pointer {
+				collectionSource = collectionSource.Elem()
+			}
+			if sourcePresent && binding.Location.Kind == "body" && collectionSource != nil && (collectionSource.Kind() == reflect.Slice || collectionSource.Kind() == reflect.Array) {
+				// Supplied null collections have zero records, not missing input.
+				// Reject here before conversion, codecs, assignment or observers.
+				err = binding.inputError(binding.validateRecordCount(result.value))
+			} else {
+				absent, err = binding.requiredAbsence()
+			}
 		}
 		if err != nil {
 			failure := &BindingError{Path: binding.Path, Name: binding.Name, Kind: binding.Location.Kind, In: binding.Location.In, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
