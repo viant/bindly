@@ -8,6 +8,8 @@ type ResolutionGroupController interface {
 	Open(context.Context, ResolutionGroupPlan) (ResolutionGroupRun, error)
 }
 type ResolutionGroupRun interface {
+	// Enter must derive its returned context from the supplied member context.
+	// Dependency scheduling retains invocation ownership and cancellation.
 	Enter(context.Context, string) (context.Context, error)
 	Observe(context.Context, ResolutionOutcome) error
 	Close(context.Context) error
@@ -20,12 +22,14 @@ func WithResolutionGroupController(controller ResolutionGroupController) BindOpt
 // ResolutionGroupPlan exposes copied immutable canonical descriptors.
 type ResolutionGroupPlan struct {
 	name    string
+	mode    ResolutionGroupMode
 	after   []string
 	members []BindingSpec
 }
 
-func (p ResolutionGroupPlan) Name() string    { return p.name }
-func (p ResolutionGroupPlan) After() []string { return append([]string(nil), p.after...) }
+func (p ResolutionGroupPlan) Name() string              { return p.name }
+func (p ResolutionGroupPlan) Mode() ResolutionGroupMode { return p.mode }
+func (p ResolutionGroupPlan) After() []string           { return append([]string(nil), p.after...) }
 func (p ResolutionGroupPlan) Members() []BindingSpec {
 	result := make([]BindingSpec, len(p.members))
 	for i, spec := range p.members {

@@ -81,13 +81,15 @@ func bindingSpecFromField(field reflect.StructField, key string, aliases bool) (
 			} else {
 				result.Cacheable = &v
 			}
-		case "resolutionGroup", "resolutionAfter", "dependsOn":
+		case "resolutionGroup", "resolutionMode", "resolutionAfter", "dependsOn":
 			if result.ResolutionGroup == nil {
 				result.ResolutionGroup = &ResolutionGroupSpec{}
 			}
 			switch key {
 			case "resolutionGroup":
 				result.ResolutionGroup.Name = value
+			case "resolutionMode":
+				result.ResolutionGroup.Mode = ResolutionGroupMode(value)
 			case "resolutionAfter":
 				result.ResolutionGroup.After = strings.Split(value, "|")
 			case "dependsOn":

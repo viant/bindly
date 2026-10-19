@@ -18,6 +18,7 @@ import (
 
 type BindOption func(*bindOptions)
 type bindOptions struct {
+	groupLimit      int
 	groupController ResolutionGroupController
 	plan            *Plan
 	source          any
@@ -61,6 +62,14 @@ func (i *Injector) Bind(ctx context.Context, target any, options ...BindOption) 
 			option(settings)
 		}
 	}
+	if settings.groupLimit < 0 {
+		return fmt.Errorf("resolution group concurrency must not be negative")
+	}
+	if settings.groupLimit != 0 {
+		if scheduler := resolutionSchedulerFrom(ctx); scheduler != nil && cap(scheduler.slots) != settings.groupLimit {
+			return fmt.Errorf("nested resolution groups must retain the invocation concurrency limit")
+		}
+	}
 	resolved, err := prepareResolvedInput(settings, target)
 	if err != nil {
 		return err
@@ -94,10 +103,12 @@ func (i *Injector) Bind(ctx context.Context, target any, options ...BindOption) 
 			}
 		}
 	}
+	invocation.groupLimit = settings.groupLimit
 	return invocation.bind(ctx, target, settings.plan)
 }
 
 type invocation struct {
+	groupLimit      int
 	groupSource     func() *structology.State
 	groupController ResolutionGroupController
 	captureSources  bool

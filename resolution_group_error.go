@@ -2,7 +2,8 @@ package bindly
 
 import "strings"
 
-// ResolutionGroupError retains real failures in binding completion order.
+// ResolutionGroupError retains real failures in completion order for the default
+// mode and declaration order for dependency-scheduled groups.
 // Returned slices and BindingError records are copies; causes are retained.
 type ResolutionGroupError struct{ failures []*BindingError }
 

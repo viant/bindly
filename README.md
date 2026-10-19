@@ -281,6 +281,75 @@ remain responsible for the concurrency safety of the data they expose. A
 `Replay` contains invocation values and must not be shared across requests;
 `Plan`, `Projection` and `ReplayPlan` retain contract metadata.
 
+## Explicit Dependency Groups
+
+Groups require an application-supplied `ResolutionGroupController`. Authoring
+metadata alone never authorizes execution. Existing groups (empty mode) retain
+their concurrent-attempt, barrier, and completion-order error behavior.
+
+Opt into bounded dependency scheduling with `resolutionMode=dependencies`:
+
+```go
+type Input struct {
+    Audiences *AudienceOutput `bind:"kind=component,in=audiences,resolutionGroup=subject,resolutionMode=dependencies"`
+    Creatives *CreativeOutput `bind:"kind=component,in=creatives,resolutionGroup=subject,resolutionMode=dependencies"`
+}
+
+err := injector.Bind(ctx, input,
+    bindly.WithSource(input),
+    bindly.WithResolutionGroupController(controller),
+    bindly.WithResolutionGroupConcurrency(2),
+)
+```
+
+The equivalent programmatic metadata uses `ResolutionGroupSpec.Mode =
+ResolutionGroupDependencies`. Optional `resolutionAfter=Jwt|Data` barriers must
+bind successfully before the group opens. `dependsOn=OtherMember` waits for that
+member's complete provider result and publication. Unknown prerequisites, cycles,
+overlapping member paths, and inconsistent group settings fail plan compilation.
+Declare any input required by a group as a barrier or member prerequisite;
+ungrouped bindings retain sequential execution and are not automatically made
+prerequisites. Separate groups run sequentially.
+
+Dependency groups default to four runnable members. They admit work before
+creating worker goroutines, isolate resolver maps and destination scratch records,
+and join all started work before closing the controller. Errors are reported in
+member declaration order; controller observations still describe actual completion.
+Optional missing values remain missing, zero values remain present, and optional
+provider errors remain errors. Failed prerequisites skip their dependents, with an
+unattempted `ResolutionOutcome` carrying `ResolutionPrerequisiteError` instead of
+a fabricated read failure. Cancellation skips pending work and joins started work.
+Controllers must honor cancellation and observe skipped outcomes for cleanup.
+
+Nested dependency groups inherit the invocation budget. The application must
+identify waits explicitly rather than holding a runnable permit across descendants:
+
+```go
+err := bindly.SuspendResolutionGroup(ctx, func(waitCtx context.Context) error {
+    return childInjector.Bind(waitCtx, child,
+        bindly.WithSource(child),
+        bindly.WithResolutionGroupController(childController),
+    )
+})
+```
+
+The waiting ancestor retains its call stack but no runnable permit. Pending work
+does not consume a goroutine. A nested group without suspension fails rather than
+deadlocking. A nested limit cannot override the inherited budget.
+Use `RunResolutionGroupPhase(waitCtx, execute)` for runnable sequential descendant
+phases, including reader execution and hooks. Suspend only dependency waits, never
+SQL execution or arbitrary work. Propagate suspension errors immediately. Do not
+reuse a member context concurrently; pass the callback's context to descendants.
+
+Destination pointer ancestors use copy-on-write so publication cannot change
+retained peer snapshots; actual provider result identities are preserved. Source
+snapshots do not deep-copy completed outputs; providers must treat their values
+as read-only. Controller and provider state must
+also be invocation-local or concurrency-safe. Bindly does not classify HTTP methods,
+grant read-only authority, suppress authorization/transaction failures, or manage
+transactions. The application must enforce those policies throughout nested calls
+and finalizers and return a provider result only after its lifecycle is complete.
+
 ## Verification
 
 The module requires Go 1.25 or newer. Run against this module's dependencies:

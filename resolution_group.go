@@ -5,16 +5,29 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sync"
 
 	"github.com/viant/structology"
 )
 
+// ResolutionGroupMode selects scheduling, not application authority.
+type ResolutionGroupMode string
+
+const (
+	// ResolutionGroupConcurrent preserves concurrent attempts and completion-order errors.
+	ResolutionGroupConcurrent ResolutionGroupMode = ""
+	// ResolutionGroupDependencies waits for successful prerequisites and reports
+	// failures in declaration order. Barriers are optional in this mode.
+	ResolutionGroupDependencies ResolutionGroupMode = "dependencies"
+)
+
 // ResolutionGroupSpec is explicit opt-in authoring metadata. After lists
-// successful canonical barriers; DependsOn denotes equivalent child input
-// validation, not serial member scheduling.
+// successful canonical barriers. In the default mode DependsOn denotes child
+// input validation; in dependencies mode it also orders member execution.
 type ResolutionGroupSpec struct {
 	Name      string
+	Mode      ResolutionGroupMode
 	After     []string
 	DependsOn []string
 }
@@ -63,7 +76,10 @@ func (p *Plan) compileResolutionGroups() error {
 		}
 		spec = copyGroupBinding(spec)
 		group := spec.ResolutionGroup
-		if group.Name == "" || len(group.After) == 0 {
+		if group.Mode != ResolutionGroupConcurrent && group.Mode != ResolutionGroupDependencies {
+			return fmt.Errorf("binding %s has unknown resolution group mode %q", spec.Path, group.Mode)
+		}
+		if group.Name == "" || (group.Mode == ResolutionGroupConcurrent && len(group.After) == 0) {
 			return fmt.Errorf("binding %s requires a named resolution group and barriers", spec.Path)
 		}
 		if spec.When != "" || spec.Async || spec.Cacheable != nil || spec.SourceType != nil || spec.Transformer != nil {
@@ -102,10 +118,13 @@ func (p *Plan) compileResolutionGroups() error {
 		if !ok {
 			index = len(p.groups)
 			groupIndex[group.Name] = index
-			p.groups = append(p.groups, ResolutionGroupPlan{name: group.Name, after: append([]string(nil), group.After...)})
+			p.groups = append(p.groups, ResolutionGroupPlan{name: group.Name, mode: group.Mode, after: append([]string(nil), group.After...)})
 		}
 		descriptor := &p.groups[index]
-		if !reflect.DeepEqual(descriptor.after, group.After) {
+		if descriptor.mode != group.Mode {
+			return fmt.Errorf("resolution group %s has inconsistent modes", group.Name)
+		}
+		if !slices.Equal(descriptor.after, group.After) {
 			return fmt.Errorf("resolution group %s has inconsistent barriers", group.Name)
 		}
 		descriptor.members = append(descriptor.members, spec)
@@ -113,6 +132,17 @@ func (p *Plan) compileResolutionGroups() error {
 	// Even though member attempts are concurrent, prerequisite cycles are invalid
 	// authoring and cannot establish equivalent child input validation.
 	for _, group := range p.groups {
+		if group.mode == ResolutionGroupDependencies {
+			for i, left := range group.members {
+				for _, right := range group.members[i+1:] {
+					a, b := p.fields[left.Path].Index, p.fields[right.Path].Index
+					length := min(len(a), len(b))
+					if reflect.DeepEqual(a[:length], b[:length]) {
+						return fmt.Errorf("resolution group %s has overlapping members %s and %s", group.name, left.Path, right.Path)
+					}
+				}
+			}
+		}
 		visiting, visited := map[string]bool{}, map[string]bool{}
 		var visit func(string) error
 		visit = func(path string) error {
@@ -153,6 +183,13 @@ func (s *invocation) bindWithGroups(ctx context.Context, target any, plan *Plan)
 	if s.replay != nil || s.resolved != nil || s.persistent != nil || s.captureSources || len(s.allowedKinds) != 0 || len(s.delayedKinds) != 0 {
 		return fmt.Errorf("resolution groups do not support replay, resolved values, explicit caches or partial binding")
 	}
+	if lease, _ := ctx.Value(resolutionLeaseKey{}).(*resolutionLease); lease != nil {
+		for _, group := range plan.groups {
+			if group.mode == ResolutionGroupDependencies {
+				return fmt.Errorf("nested dependency groups require SuspendResolutionGroup around the dependency wait")
+			}
+		}
+	}
 	completed := map[string]bool{}
 	subset := func(specs []BindingSpec) *Plan {
 		return &Plan{target: plan.target, fields: plan.fields, bindings: specs}
@@ -182,6 +219,15 @@ func (s *invocation) bindWithGroups(ctx context.Context, target any, plan *Plan)
 		}
 		if run == nil {
 			return fmt.Errorf("resolution group controller returned no run")
+		}
+		if group.mode == ResolutionGroupDependencies {
+			if err := s.bindDependencyGroup(ctx, target, plan, group, run); err != nil {
+				return err
+			}
+			for _, member := range group.members {
+				completed[member.Path] = true
+			}
+			continue
 		}
 		groupCtx, cancel := context.WithCancel(ctx)
 		var collector sync.Mutex
