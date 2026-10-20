@@ -213,6 +213,17 @@ conversion, defaults and transforms, then follow ordinary validation, assignment
 presence-marker and observer processing. Unselected fields bind normally. Seeded
 observer metadata is nil; this option creates no authorization provenance.
 
+With dependency-mode resolution groups, selected non-group values bind before
+any group opens, using the normal conditions, validation, presence markers and
+observation. A declared barrier already bound from a seed is not assigned again.
+Unselected bindings, including dependent `param` loaders, still resolve normally.
+The selected paths and their marker writes must not overlap any group member or
+its markers, including ancestor/descendant paths and promoted-field aliases.
+Validation rejects overlap before cloning or starting providers, even for nil or
+zero values. Legacy groups (including mixed legacy/dependency plans) still reject
+resolved input. Authentication and trusted-seed admission remain the caller's
+responsibility; a supplied value does not establish verified authorization.
+
 The clone retains shared references within the selected data graph while
 detaching supported mutable data from the caller. Unsupported mutable values
 fail capture. Presence selects explicitly supplied zero values as well as nonzero

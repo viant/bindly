@@ -180,8 +180,15 @@ func (s *invocation) bindWithGroups(ctx context.Context, target any, plan *Plan)
 	if s.groupController == nil {
 		return fmt.Errorf("resolution groups require an invocation controller")
 	}
-	if s.replay != nil || s.resolved != nil || s.persistent != nil || s.captureSources || len(s.allowedKinds) != 0 || len(s.delayedKinds) != 0 {
-		return fmt.Errorf("resolution groups do not support replay, resolved values, explicit caches or partial binding")
+	if s.replay != nil || s.persistent != nil || s.captureSources || len(s.allowedKinds) != 0 || len(s.delayedKinds) != 0 {
+		return fmt.Errorf("resolution groups do not support replay, explicit caches or partial binding")
+	}
+	if s.resolved != nil {
+		for _, group := range plan.groups {
+			if group.mode != ResolutionGroupDependencies {
+				return fmt.Errorf("resolved input requires dependency-mode resolution groups")
+			}
+		}
 	}
 	if lease, _ := ctx.Value(resolutionLeaseKey{}).(*resolutionLease); lease != nil {
 		for _, group := range plan.groups {
@@ -193,6 +200,20 @@ func (s *invocation) bindWithGroups(ctx context.Context, target any, plan *Plan)
 	completed := map[string]bool{}
 	subset := func(specs []BindingSpec) *Plan {
 		return &Plan{target: plan.target, fields: plan.fields, bindings: specs}
+	}
+	if s.resolvedTarget == target && len(s.resolved) > 0 {
+		var seeded []BindingSpec
+		for _, spec := range plan.bindings {
+			if _, selected := s.resolved[spec.Path]; selected {
+				seeded = append(seeded, spec)
+			}
+		}
+		if err := s.bind(ctx, target, subset(seeded)); err != nil {
+			return err
+		}
+		for _, spec := range seeded {
+			completed[spec.Path] = true
+		}
 	}
 	for _, group := range plan.groups {
 		var barriers []BindingSpec

@@ -16,6 +16,8 @@ import (
 // throughout the invocation; ordinary selected data remains detached.
 // WithPlan must supply the identical plan; replay cannot be combined with this
 // option. Normal conditions, validation, assignment and observation still run.
+// Dependency-mode groups allow only paths disjoint from every group member and
+// its presence marker. Those selected values bind before any group is opened.
 func WithResolvedInput(plan *Plan, detachedInput any, paths ...string) BindOption {
 	selection := append([]string(nil), paths...)
 	return func(options *bindOptions) {
@@ -53,6 +55,9 @@ func prepareResolvedInput(options *bindOptions, target any) (map[string]any, err
 		if !value.IsValid() || value.Type() != expected || value.IsNil() {
 			return nil, fmt.Errorf("resolved input and target must be non-nil %s", expected)
 		}
+	}
+	if err := validateResolvedGroupPaths(seed.plan, seed.paths); err != nil {
+		return nil, err
 	}
 	declared := make(map[string]BindingSpec, len(seed.plan.bindings))
 	for _, binding := range seed.plan.bindings {
@@ -102,4 +107,49 @@ func prepareResolvedInput(options *bindOptions, target any) (map[string]any, err
 		result[path] = field.Interface()
 	}
 	return result, nil
+}
+
+func validateResolvedGroupPaths(plan *Plan, paths []string) error {
+	if len(plan.groups) == 0 {
+		return nil
+	}
+	for _, group := range plan.groups {
+		if group.mode != ResolutionGroupDependencies {
+			return fmt.Errorf("resolved input requires dependency-mode resolution groups")
+		}
+	}
+	for _, path := range paths {
+		selected, exists := plan.fields[path]
+		if !exists {
+			continue // The ordinary resolved-input validation reports unknown paths.
+		}
+		writes := [][]int{selected.Index}
+		for _, binding := range plan.bindings {
+			if binding.Path == path && binding.MarkerField != "" {
+				writes = append(writes, plan.fields[binding.MarkerField].Index)
+				break
+			}
+		}
+		for _, group := range plan.groups {
+			for _, member := range group.members {
+				for _, protected := range []string{member.Path, member.MarkerField} {
+					for _, write := range writes {
+						if protected != "" && overlappingFieldIndexes(write, plan.fields[protected].Index) {
+							return fmt.Errorf("resolved input binding %s overlaps resolution group binding %s", path, member.Path)
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func overlappingFieldIndexes(left, right []int) bool {
+	for i := 0; i < len(left) && i < len(right); i++ {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
