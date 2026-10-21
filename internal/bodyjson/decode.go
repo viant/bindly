@@ -41,6 +41,7 @@ func decode(raw []byte, target reflect.Type, public bool) (any, error) {
 	}
 	value := reflect.New(target)
 	if err := json.Unmarshal(raw, value.Interface()); err != nil {
+		enrichArrayTypeError(raw, target, err)
 		return nil, &input.Error{Cause: err}
 	}
 	if err := MarkPresence(value.Elem(), raw, public); err != nil {
