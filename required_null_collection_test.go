@@ -64,16 +64,14 @@ func TestRequiredBodyCollectionPresenceDiagnostic(t *testing.T) {
 			require.Error(t, err)
 			var binding *bindly.BindingError
 			require.ErrorAs(t, err, &binding)
-			expectedCode := 400
-			if tc.name == "emptyArray" {
-				expectedCode = 0
-			}
-			require.Equal(t, expectedCode, binding.StatusCode())
+			require.Equal(t, 400, binding.StatusCode())
 			require.Equal(t, "Rows", binding.Path)
-			if tc.want != "" && tc.name != "presentNull" {
-				require.Contains(t, err.Error(), tc.want)
+			if tc.want != "" {
+				require.Equal(t, tc.want, err.Error())
+			} else if tc.name == "malformed" {
+				require.Equal(t, "Bad Request", err.Error())
 			}
-			if tc.name == "presentNull" {
+			if tc.name == "presentNull" || tc.name == "emptyArray" {
 				_, absence := binding.RequiredAbsenceMessage()
 				require.False(t, absence)
 				var inputErr *bindinput.Error
@@ -125,7 +123,7 @@ func TestRequiredNullCollectionStatusMessageAndCountPriority(t *testing.T) {
 			case "interpolation":
 				require.Equal(t, "invalid: "+tc.diagnostic, err.Error())
 			default:
-				require.Equal(t, "Bad Request", err.Error())
+				require.Equal(t, tc.diagnostic, err.Error())
 			}
 		})
 	}

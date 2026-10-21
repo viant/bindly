@@ -278,7 +278,9 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 			if sourcePresent && binding.Location.Kind == "body" && collectionSource != nil && (collectionSource.Kind() == reflect.Slice || collectionSource.Kind() == reflect.Array) {
 				// Supplied null collections have zero records, not missing input.
 				// Reject here before conversion, codecs, assignment or observers.
-				err = binding.inputError(binding.validateRecordCount(result.value))
+				if countErr := binding.validateRecordCount(result.value); countErr != nil {
+					return binding.recordCountError(countErr)
+				}
 			} else {
 				absent, err = binding.requiredAbsence()
 			}
@@ -305,7 +307,7 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 		if !preparedValue && binding.Transformer != nil {
 			if binding.countsSourceRecords() {
 				if err = binding.validateRecordCount(result.value); err != nil {
-					return &BindingError{Path: binding.Path, Name: binding.Name, Kind: binding.Location.Kind, In: binding.Location.In, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
+					return binding.recordCountError(err)
 				}
 			}
 			result.metadata = nil
@@ -327,7 +329,7 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 		}
 		if preparedValue || binding.Transformer == nil || !binding.countsSourceRecords() {
 			if err = binding.validateRecordCount(result.value); err != nil {
-				return &BindingError{Path: binding.Path, Name: binding.Name, Kind: binding.Location.Kind, In: binding.Location.In, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
+				return binding.recordCountError(err)
 			}
 		}
 		if err = plan.fields[binding.Path].Set(targetValue, result.value); err != nil {

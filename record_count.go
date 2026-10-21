@@ -87,3 +87,15 @@ func (b *BindingSpec) validateRecordCount(value any) error {
 	}
 	return nil
 }
+
+// recordCountError exposes only diagnostics produced by our own count check.
+// External input errors keep their typed cause; unrelated provider and codec
+// failures never pass through this path or acquire a public message here.
+func (b BindingSpec) recordCountError(cause error) *BindingError {
+	classified := b.inputError(cause)
+	message := b.ErrorMessage
+	if message == "" && classified != cause {
+		message = cause.Error()
+	}
+	return &BindingError{Path: b.Path, Name: b.Name, Kind: b.Location.Kind, In: b.Location.In, Code: b.ErrorCode, Message: message, Cause: classified}
+}
