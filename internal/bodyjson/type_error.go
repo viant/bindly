@@ -87,7 +87,10 @@ func verifiedTypeErrorField(raw []byte, base int64, plan *internalPlan, parts []
 		}
 		end := base + d.InputOffset()
 		start := end - int64(len(value))
-		if key != field.field.Name {
+		// Match the same canonical field selected by JSON decoding, including
+		// untagged Go fields supplied with a case-folded wire name.
+		name, ok := key.(string)
+		if !ok || plan.field(name) != field {
 			continue
 		}
 		matches++

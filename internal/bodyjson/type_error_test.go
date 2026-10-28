@@ -82,3 +82,29 @@ func TestArrayTypeErrorNegative(t *testing.T) {
 type opaqueDiagnostic []diagnosticRow
 
 func (*opaqueDiagnostic) UnmarshalJSON([]byte) error { return errors.New("custom") }
+
+func TestArrayTypeErrorCaseFoldedField(t *testing.T) {
+	type row struct{ Value *diagnosticValue }
+	type useCase struct{ description, input, expected string }
+	for _, tc := range []useCase{
+		{"lowercase first", `[{"value":"bad"}]`, "0.Value"},
+		{"mixed case second", `[{}, {"vAlUe":"bad"}]`, "1.Value"},
+		{"duplicate aliases remain ambiguous", `[{"value":"bad","Value":"also bad"}]`, "Value"},
+	} {
+		t.Run(tc.description, func(t *testing.T) {
+			var rows []*row
+			err := json.Unmarshal([]byte(tc.input), &rows)
+			var failure *json.UnmarshalTypeError
+			if !errors.As(err, &failure) {
+				t.Fatal(err)
+			}
+			// Exercise the Go 1.26 field spelling even on newer toolchains.
+			failure.Field = "Value"
+			before := *failure
+			enrichArrayTypeError([]byte(tc.input), reflect.TypeFor[[]*row](), failure)
+			if failure.Field != tc.expected || failure.Offset != before.Offset || failure.Type != before.Type || failure.Value != before.Value {
+				t.Fatalf("diagnostic=%#v want field %s", failure, tc.expected)
+			}
+		})
+	}
+}
