@@ -2,6 +2,7 @@ package bindly
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/viant/bindly/input"
@@ -272,6 +273,11 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 		var absent *requiredAbsenceError
 		if s.strictMissing && err == nil && (!result.found || nilValue(result.value)) && binding.Required != nil && *binding.Required {
 			collectionSource := sourceType
+			// Raw JSON is an encoded value, not a slice of records. Required
+			// null behavior follows the decoded destination's collection shape.
+			if collectionSource == reflect.TypeFor[json.RawMessage]() {
+				collectionSource = targetType
+			}
 			for collectionSource != nil && collectionSource.Kind() == reflect.Pointer {
 				collectionSource = collectionSource.Elem()
 			}
