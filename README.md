@@ -172,6 +172,13 @@ bytes subsequently use public body decoding and do not carry that trust.
 
 ## Cache Semantics
 
+For caller-effective contracts, `provider/body.ValidateRequired(raw, targetType)`
+provides an explicit nested required-presence check before native decoding. It
+uses the same public field selection as body binding, skips hidden fields and
+opaque custom representations, and treats zero, false and null as supplied values.
+It does not install enum/value validation or alter `Source.Value` defaults.
+Call it only when the producer's contract requires this admission check.
+
 Each `Bind` owns an invocation cache keyed by provider owner, location and target
 type. A binding-level `cacheable` value overrides the provider's
 `locator.CachePolicy`; providers without a policy default to non-cacheable.
