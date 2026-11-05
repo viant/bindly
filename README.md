@@ -6,6 +6,19 @@ capturing request data in the compiled plan.
 
 ## Core Model
 
+`Binder` is the public binding interface implemented by `*Injector`:
+
+```go
+type Binder interface {
+    Bind(context.Context, any, ...BindOption) error
+}
+```
+
+Consumers may accept `bindly.Binder` without depending on injector construction.
+Existing calls without options keep their behavior; compiled plans and other
+native options remain available. Specialized scope adapters may restrict options
+to preserve their own source or plan authority and must report unsupported options.
+
 - An application `Injector` owns provider definitions, transformers, type
   metadata, and generic resources.
 - `CompilePlan` converts component metadata into an immutable reusable plan.
