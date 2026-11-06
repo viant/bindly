@@ -53,7 +53,9 @@ func WithDecoders(decoders *DecoderRegistry) Option { return func(s *Source) { s
 
 type jsonDecoder struct{}
 
-func (jsonDecoder) Decode(raw []byte, target any) error { return json.Unmarshal(raw, target) }
+func (jsonDecoder) Decode(raw []byte, target any) error {
+	return structjson.UnmarshalStandard(raw, target)
+}
 func (j jsonDecoder) DecodeField(raw []byte, name string, target any) (bool, error) {
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &object); err != nil {

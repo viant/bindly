@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/viant/bindly/input"
 	structjson "github.com/viant/structology/encoding/json"
+	"github.com/viant/tagly/choice"
 	xshape "github.com/viant/x/shape"
 	"reflect"
 	"strings"
@@ -46,7 +47,7 @@ func decode(raw []byte, target reflect.Type, public bool, metadata ...*xshape.Re
 	}
 	value := reflect.New(target)
 	decode := json.Unmarshal
-	if representation != nil {
+	if representation != nil || choice.HasEnum(target) {
 		decode = func(data []byte, target any) error {
 			return structjson.UnmarshalStandard(data, target, structjson.WithRepresentation(representation))
 		}
