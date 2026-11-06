@@ -4,13 +4,17 @@ package bodyjson
 import (
 	"encoding/json"
 	"github.com/viant/bindly/input"
+	structjson "github.com/viant/structology/encoding/json"
+	xshape "github.com/viant/x/shape"
 	"reflect"
 	"strings"
 )
 
 // DecodePublic filters canonical internal members and normalizes default dates
 // before the existing typed JSON decoder and presence reconstruction.
-func DecodePublic(raw []byte, target reflect.Type) (any, error) { return decode(raw, target, true) }
+func DecodePublic(raw []byte, target reflect.Type, metadata ...*xshape.Representation) (any, error) {
+	return decode(raw, target, true, metadata...)
+}
 
 // VerifyTypedRoundtrip reconstructs only Replay.encodeField's immediately preceding
 // local marshal. Stored raw replay continues through the public body Source.
@@ -18,7 +22,8 @@ func VerifyTypedRoundtrip(raw []byte, target reflect.Type) (any, error) {
 	return decode(raw, target, false)
 }
 
-func decode(raw []byte, target reflect.Type, public bool) (any, error) {
+func decode(raw []byte, target reflect.Type, public bool, metadata ...*xshape.Representation) (any, error) {
+	representation := metadataForType(firstMetadata(metadata), target)
 	if strings.TrimSpace(string(raw)) == "null" {
 		return nil, nil
 	}
@@ -33,18 +38,24 @@ func decode(raw []byte, target reflect.Type, public bool) (any, error) {
 		return append(json.RawMessage(nil), raw...), nil
 	}
 	if public {
-		filtered, err := filterPublic(raw, target, true)
+		filtered, err := filterPublic(raw, target, true, representation)
 		if err != nil {
 			return nil, &input.Error{Cause: err}
 		}
 		raw = filtered
 	}
 	value := reflect.New(target)
-	if err := json.Unmarshal(raw, value.Interface()); err != nil {
+	decode := json.Unmarshal
+	if representation != nil {
+		decode = func(data []byte, target any) error {
+			return structjson.UnmarshalStandard(data, target, structjson.WithRepresentation(representation))
+		}
+	}
+	if err := decode(raw, value.Interface()); err != nil {
 		enrichArrayTypeError(raw, target, err)
 		return nil, &input.Error{Cause: err}
 	}
-	if err := MarkPresence(value.Elem(), raw, public); err != nil {
+	if err := MarkPresence(value.Elem(), raw, public, representation); err != nil {
 		return nil, err
 	}
 	return value.Elem().Interface(), nil
@@ -52,6 +63,6 @@ func decode(raw []byte, target reflect.Type, public bool) (any, error) {
 
 // FilterPublic shares canonical JSON filtering with a registered JSON decoder.
 // The caller retains its existing decoder and native presence reconstruction.
-func FilterPublic(raw []byte, target reflect.Type) ([]byte, error) {
-	return excludeInternal(raw, target)
+func FilterPublic(raw []byte, target reflect.Type, metadata ...*xshape.Representation) ([]byte, error) {
+	return filterPublic(raw, target, false, metadata...)
 }

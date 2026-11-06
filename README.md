@@ -393,3 +393,13 @@ GOWORK=off GO111MODULE=on go test -mod=readonly ./...
 GOWORK=off GO111MODULE=on go test -mod=readonly -race ./...
 GOWORK=off GO111MODULE=on go vet -mod=readonly ./...
 ```
+
+## Opt-in body representation
+
+`body.WithRepresentation(metadata)` supplies an immutable `shape.Representation`
+to typed JSON body resolution. The target remains `metadata.Original()`. Native
+filtering, explicit requiredness checks and presence reconstruction use the same
+metadata; hidden and retired field spellings are removed before a registered decoder
+runs. Registered decoders opt in with `UnmarshalWithRepresentation`; the default
+JSON decoder retains standard JSON semantics. Metadata-free behavior is unchanged.
+Caller-specific metadata is not retained in the global linked-type plan cache.

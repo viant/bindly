@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	xshape "github.com/viant/x/shape"
 	"reflect"
 	"strconv"
 )
@@ -12,8 +13,8 @@ import (
 // same canonical JSON field selection as public decoding. It is opt-in, and
 // checks presence, not truthiness or membership. Supplied null counts as present;
 // the decoder and the field's value contract retain null/type semantics.
-func ValidateRequired(raw []byte, target reflect.Type) error {
-	plan, err := compileInternalPlan(target, nil)
+func ValidateRequired(raw []byte, target reflect.Type, metadata ...*xshape.Representation) error {
+	plan, err := compileInternalPlan(target, nil, metadata...)
 	if err != nil {
 		return err
 	}

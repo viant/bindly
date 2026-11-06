@@ -7,5 +7,5 @@ import (
 )
 
 func (s *Source) markPresence(target reflect.Value, raw json.RawMessage) error {
-	return bodyjson.MarkPresence(target, raw, true)
+	return bodyjson.MarkPresence(target, raw, true, s.representation)
 }

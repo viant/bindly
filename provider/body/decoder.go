@@ -3,6 +3,8 @@ package body
 import (
 	"encoding/json"
 	"fmt"
+	structjson "github.com/viant/structology/encoding/json"
+	"github.com/viant/x/shape"
 	"strings"
 	"sync"
 )
@@ -72,4 +74,8 @@ func (j jsonDecoder) DecodeField(raw []byte, name string, target any) (bool, err
 		return false, nil
 	}
 	return true, j.Decode(selected, target)
+}
+
+func (jsonDecoder) UnmarshalWithRepresentation(raw []byte, target any, metadata *shape.Representation) error {
+	return structjson.UnmarshalStandard(raw, target, structjson.WithRepresentation(metadata))
 }
