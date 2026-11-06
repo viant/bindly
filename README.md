@@ -160,8 +160,11 @@ retain ownership of their representation.
 A binding can opt into allocating an empty record for a supplied whole JSON
 `null` with `BindingSpec.BodyNullPolicy = "empty-record"`, or the tag
 `bodyNullPolicy=empty-record`. The target must be a direct pointer to a struct
-at `body/`, without source-type adaptations or transformers. Missing bodies
-still fail required binding. The allocated record is fresh, its body is
+at `body/`. Direct decoding and a `json.RawMessage` source with a transformer
+are supported; other source adaptations remain invalid. For a raw JSON decoder,
+explicit null uses the native empty-record allocator and skips the transformer,
+while non-null JSON reaches the transformer normally. Missing bodies still fail
+required binding. The allocated record is fresh, its body is
 present, and its field markers are all false. Invalid policies and targets
 fail plan compilation; other bindings retain their null behavior.
 

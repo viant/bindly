@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/viant/bindly/input"
+	bodyprovider "github.com/viant/bindly/provider/body"
 	"reflect"
 	"sort"
 	"strings"
@@ -257,7 +258,17 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 				result, err = s.replay.Replay.source(ctx, selectedBinding, sourceType)
 			}
 		} else {
-			result, err = s.resolveBindingResult(ctx, &binding.Location, sourceType, binding.Cacheable, binding.BodyNullPolicy)
+			providerPolicy := binding.BodyNullPolicy
+			if binding.rawBodyNullPolicy() {
+				providerPolicy = ""
+			}
+			result, err = s.resolveBindingResult(ctx, &binding.Location, sourceType, binding.Cacheable, providerPolicy)
+		}
+		if !preparedValue && err == nil && binding.rawBodyNullPolicy() && result.found && nilValue(result.value) {
+			result.value, err = bodyprovider.NewEmptyRecord(targetType)
+			result.metadata = nil
+			preparedValue = true
+			sourceType = targetType
 		}
 		// A default must not turn an absent source into a present-null diagnostic.
 		sourcePresent := result.found

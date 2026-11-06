@@ -1,6 +1,7 @@
 package bindly
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -192,8 +193,15 @@ func (b BindingSpec) ValidateBodyNullPolicy(target reflect.Type) error {
 	if target == nil || target.Kind() != reflect.Pointer || target.Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("bodyNullPolicy requires a direct pointer-to-struct target")
 	}
-	if b.SourceType != nil || b.Transformer != nil {
+	if (b.SourceType != nil || b.Transformer != nil) && !b.rawBodyNullPolicy() {
 		return fmt.Errorf("bodyNullPolicy does not support source-type adaptations or transformers")
 	}
 	return nil
+}
+
+// rawBodyNullPolicy is the bounded JSON decoder adaptation of a whole *struct
+// body. The source stays raw; explicit null is allocated by native binding before
+// transformation, just as it is for a directly decoded body.
+func (b BindingSpec) rawBodyNullPolicy() bool {
+	return b.BodyNullPolicy == "empty-record" && b.SourceType == reflect.TypeFor[json.RawMessage]() && b.Transformer != nil
 }
