@@ -52,3 +52,44 @@ func TestInputPolicyNativeBody(t *testing.T) {
 		}
 	}
 }
+
+func TestInputAliasPriorityBody(t *testing.T) {
+	type row struct {
+		ID  *int               `json:"flightId" format:"inputNames=CampaignFlightId,inputNamesPriority=alias,inputNamesCase=fold"`
+		Has *struct{ ID bool } `json:"-" setMarker:"true"`
+	}
+	type envelope struct {
+		Rows []row `json:"rows"`
+	}
+	for _, tc := range []struct {
+		raw  string
+		want int
+		fail bool
+	}{
+		{`{"CampaignFlightId":2,"flightId":1}`, 2, false}, {`{"flightId":1,"campaignflightid":2}`, 2, false},
+		{`{"CampaignFlightId":null,"flightId":1}`, -1, false}, {`{"flightId":"discarded","CampaignFlightId":2}`, 2, false},
+		{`{"CampaignFlightId":"bad","flightId":1}`, -1, true}, {`{"CampaignFlightId":2,"flightId":[}`, -1, true},
+		{`{"CampaignFlightId":2,"flightId":1,"CAMPAIGNFLIGHTID":3}`, 3, false},
+	} {
+		raw := `{"rows":[` + tc.raw + `]}`
+		s, _ := New([]byte(raw), "application/json", nil)
+		v, _, err := s.Value(t.Context(), reflect.TypeFor[envelope](), "")
+		if tc.fail {
+			if err == nil {
+				t.Errorf("accepted %s", raw)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(raw, err)
+		}
+		r := v.(envelope).Rows[0]
+		got := -1
+		if r.ID != nil {
+			got = *r.ID
+		}
+		if got != tc.want || r.Has == nil || !r.Has.ID {
+			t.Fatalf("%s got%v has%+v", raw, got, r.Has)
+		}
+	}
+}

@@ -5,8 +5,8 @@ go 1.25.0
 require (
 	github.com/stretchr/testify v1.11.1
 	github.com/viant/afs v1.29.0
-	github.com/viant/structology v0.10.2-0.20261107201851-dae24d456ebc
-	github.com/viant/tagly v0.4.2-0.20261107201725-921cda4735cc
+	github.com/viant/structology v0.10.2-0.20261107203448-ea036bb4a0b8
+	github.com/viant/tagly v0.4.2-0.20261107203350-aa97b3f5387b
 )
 
 require (
