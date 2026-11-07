@@ -6,7 +6,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/viant/afs v1.29.0
 	github.com/viant/structology v0.10.2-0.20261106041415-f131ad778c85
-	github.com/viant/tagly v0.4.1-0.20261003132159-8165180970e1
+	github.com/viant/tagly v0.4.2-0.20261107044640-f8cc13f24ac5
 )
 
 require (
