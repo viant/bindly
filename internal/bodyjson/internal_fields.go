@@ -24,6 +24,7 @@ type internalPlan struct {
 	timeLeaf    bool
 	pointerTime bool
 	internal    bool
+	inputs      bool
 	dates       bool
 	dateErr     error
 }
@@ -31,6 +32,7 @@ type internalField struct {
 	field  xshape.JSONField
 	denied bool
 	child  *internalPlan
+	input  inputRule
 }
 
 type internalPlanResult struct {
@@ -56,25 +58,28 @@ func compileInternalPlan(target reflect.Type, _ map[reflect.Type]*internalPlan) 
 		for changed {
 			changed = false
 			for _, node := range memo {
-				internal, dates := node.internal, node.dates
+				internal, dates, inputs := node.internal, node.dates, node.inputs
 				dateErr := node.dateErr
 				if node.item != nil {
 					internal, dates = internal || node.item.internal, dates || node.item.dates
+					inputs = inputs || node.item.inputs
 					if dateErr == nil {
 						dateErr = node.item.dateErr
 					}
 				}
 				for _, field := range node.fields {
 					internal = internal || field.denied
+					inputs = inputs || field.input.active()
 					if field.child != nil {
 						internal, dates = internal || field.child.internal, dates || field.child.dates
+						inputs = inputs || field.child.inputs
 						if dateErr == nil {
 							dateErr = field.child.dateErr
 						}
 					}
 				}
-				if internal != node.internal || dates != node.dates || node.dateErr == nil && dateErr != nil {
-					node.internal, node.dates, node.dateErr, changed = internal, dates, dateErr, true
+				if internal != node.internal || dates != node.dates || inputs != node.inputs || node.dateErr == nil && dateErr != nil {
+					node.internal, node.dates, node.inputs, node.dateErr, changed = internal, dates, inputs, dateErr, true
 				}
 			}
 		}
@@ -125,6 +130,10 @@ func buildInternalPlan(target reflect.Type, memo map[reflect.Type]*internalPlan)
 		for _, field := range fields {
 			item := internalField{field: field, denied: internalOwner(target, field.Field.Index)}
 			if !item.denied {
+				item.input, err = compileInputRule(field.Field.Tag, field.Field.ReflectedType)
+				if err != nil {
+					return nil, err
+				}
 				item.child, err = buildInternalPlan(field.Field.ReflectedType, memo)
 				if err != nil {
 					return nil, err
@@ -167,7 +176,7 @@ func (p *internalPlan) hasInternal(_ map[*internalPlan]bool) bool {
 	return p != nil && p.internal
 }
 func (p *internalPlan) relevant(normalizeDates bool) bool {
-	return p != nil && (p.internal || normalizeDates && p.dates)
+	return p != nil && (p.internal || normalizeDates && (p.dates || p.inputs))
 }
 func (p *internalPlan) field(name string) *internalField {
 	for i := range p.fields {
@@ -319,6 +328,17 @@ func (p *internalPlan) filterObject(raw []byte, normalizeDates bool, dates *date
 				if field.denied {
 					changed = true
 					continue
+				}
+				if normalizeDates && field.input.active() {
+					converted, omit := field.input.apply(value)
+					if omit {
+						changed = true
+						continue
+					}
+					if !bytes.Equal(value, converted) {
+						changed = true
+					}
+					value = converted
 				}
 				child = field.child
 				childPath = path + "/f" + strconv.Itoa(len(field.field.Name)) + ":" + field.field.Name
