@@ -6,27 +6,33 @@ import (
 	"github.com/viant/tagly/format"
 )
 
-func selectInputMembers(raw []byte, names *format.InputNameMatcher) ([]bool, error) {
+type inputScopeState struct {
+	enabled   bool
+	ancestors []format.InputScope
+}
+
+func selectInputMembers(raw []byte, names *format.InputNameMatcher, ancestors []format.InputScope) ([]bool, []format.InputMember, error) {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	if _, err := d.Token(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var members []format.InputMember
 	for d.More() {
 		key, err := d.Token()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		var value json.RawMessage
 		if err = d.Decode(&value); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		members = append(members, format.InputMember{Name: key.(string), Kind: inputMemberKind(value)})
 	}
 	if _, err := d.Token(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return names.Select(members), nil
+	selected, err := names.SelectScoped(members, ancestors)
+	return selected, members, err
 }
 func inputMemberKind(raw []byte) string {
 	raw = bytes.TrimSpace(raw)

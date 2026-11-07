@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	structunmarshal "github.com/viant/structology/encoding/json/unmarshal"
 	"github.com/viant/tagly/format"
 
 	xshape "github.com/viant/x/shape"
@@ -240,7 +241,7 @@ func buildInternalPlan(target reflect.Type, memo map[internalPlanKey]*internalPl
 		for i, selected := range plan.fields {
 			names[i].Name = selected.field.Name
 			policyText := strings.ToLower(selected.field.Field.Tag.Get("format"))
-			if strings.Contains(policyText, "inputnames") || strings.Contains(policyText, "inputgroup") || strings.Contains(policyText, "inputpriority") || strings.Contains(policyText, "inputcase") {
+			if strings.Contains(policyText, "inputnames") || strings.Contains(policyText, "inputgroup") || strings.Contains(policyText, "inputpriority") || strings.Contains(policyText, "inputcase") || strings.Contains(policyText, "inputunless") {
 				policy, err := format.Parse(selected.field.Field.Tag)
 				if err != nil {
 					return nil, err
@@ -249,11 +250,12 @@ func buildInternalPlan(target reflect.Type, memo map[internalPlanKey]*internalPl
 					policy.InputGroup = ""
 					policy.InputPriority = ""
 					policy.InputCase = ""
+					policy.InputUnless = ""
 				}
 				names[i].Aliases = policy.InputNames
 				policies[i] = policy
 				plan.aliases = plan.aliases || policy.InputNames != "" || policy.HasInputNamePolicy()
-				plan.selection = plan.selection || policy.InputGroup != "" || policy.InputCase != ""
+				plan.selection = plan.selection || policy.InputGroup != "" || policy.InputCase != "" || policy.InputUnless != ""
 			}
 		}
 		var err error
@@ -296,6 +298,10 @@ func excludeInternal(raw []byte, target reflect.Type) ([]byte, error) {
 	return filterPublic(raw, target, false)
 }
 func filterPublic(raw []byte, target reflect.Type, normalizeDates bool, representations ...*xshape.Representation) ([]byte, error) {
+	guards, guardErr := structunmarshal.ValidateInputGuards(target, metadataForType(firstMetadata(representations), target))
+	if guardErr != nil {
+		return nil, guardErr
+	}
 	plan, err := compileInternalPlan(target, nil, representations...)
 	if err != nil {
 		return nil, err
@@ -312,9 +318,9 @@ func filterPublic(raw []byte, target reflect.Type, normalizeDates bool, represen
 	if err = json.Unmarshal(raw, &valid); err != nil {
 		return nil, err
 	}
-	return plan.filter(raw, normalizeDates, &dateState{values: map[string][]byte{}}, "$")
+	return plan.filter(raw, normalizeDates, &dateState{values: map[string][]byte{}}, "$", &inputScopeState{enabled: guards})
 }
-func (p *internalPlan) filter(raw []byte, normalizeDates bool, dates *dateState, path string) ([]byte, error) {
+func (p *internalPlan) filter(raw []byte, normalizeDates bool, dates *dateState, path string, scopes *inputScopeState) ([]byte, error) {
 	if !p.relevant(normalizeDates) {
 		return raw, nil
 	}
@@ -346,15 +352,15 @@ func (p *internalPlan) filter(raw []byte, normalizeDates bool, dates *dateState,
 		return raw, nil
 	}
 	if (p.kind == reflect.Slice || p.kind == reflect.Array) && trimmed[0] == '[' {
-		return p.filterArray(raw, normalizeDates, dates, path)
+		return p.filterArray(raw, normalizeDates, dates, path, scopes)
 	}
 	if (p.kind == reflect.Struct || p.kind == reflect.Map) && trimmed[0] == '{' {
-		return p.filterObject(raw, normalizeDates, dates, path)
+		return p.filterObject(raw, normalizeDates, dates, path, scopes)
 	}
 	// A public type mismatch remains the ordinary decoder's error.
 	return raw, nil
 }
-func (p *internalPlan) filterArray(raw []byte, normalizeDates bool, dates *dateState, path string) ([]byte, error) {
+func (p *internalPlan) filterArray(raw []byte, normalizeDates bool, dates *dateState, path string, scopes *inputScopeState) ([]byte, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	if _, err := decoder.Token(); err != nil {
 		return nil, err
@@ -371,7 +377,7 @@ func (p *internalPlan) filterArray(raw []byte, normalizeDates bool, dates *dateS
 		end := int(decoder.InputOffset())
 		start := end - len(value)
 		normalizeItem := normalizeDates && (p.kind != reflect.Array || index < p.arrayLen)
-		filtered, err := p.item.filter(value, normalizeItem, dates, path+"/i"+strconv.Itoa(index))
+		filtered, err := p.item.filter(value, normalizeItem, dates, path+"/i"+strconv.Itoa(index), scopes)
 		if err != nil {
 			return nil, err
 		}
@@ -397,14 +403,38 @@ func (p *internalPlan) filterArray(raw []byte, normalizeDates bool, dates *dateS
 	}
 	return append(result, raw[previous:]...), nil
 }
-func (p *internalPlan) filterObject(raw []byte, normalizeDates bool, dates *dateState, path string) ([]byte, error) {
+func (p *internalPlan) filterObject(raw []byte, normalizeDates bool, dates *dateState, path string, scopes *inputScopeState) ([]byte, error) {
 	var admitted []bool
-	if normalizeDates && p.names.HasPolicies() {
+	var inputMembers []format.InputMember
+	if normalizeDates && p.kind == reflect.Struct && (scopes.enabled || p.names.HasPolicies()) {
 		var err error
-		admitted, err = selectInputMembers(raw, p.names)
+		admitted, inputMembers, err = selectInputMembers(raw, p.names, scopes.ancestors)
 		if err != nil {
 			return nil, err
 		}
+	}
+	if normalizeDates && scopes.enabled && p.kind == reflect.Struct {
+		current := format.InputScope{}
+		for _, f := range p.fields {
+			if !f.denied && f.field.Field.Tag.Get("setMarker") != "true" {
+				current[f.field.Field.Name] = false
+			}
+		}
+		for i, m := range inputMembers {
+			if admitted != nil && !admitted[i] {
+				continue
+			}
+			index, _, excluded := p.names.Classify(m.Name)
+			if index >= 0 && !excluded {
+				field := p.fields[index]
+				if _, ok := current[field.field.Field.Name]; ok {
+					current[field.field.Field.Name] = true
+				}
+			}
+		}
+		previous := scopes.ancestors
+		scopes.ancestors = append([]format.InputScope{current}, previous...)
+		defer func() { scopes.ancestors = previous }()
 	}
 	occurrence := 0
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -466,7 +496,7 @@ func (p *internalPlan) filterObject(raw []byte, normalizeDates bool, dates *date
 				childPath = path + "/f" + strconv.Itoa(len(field.field.Name)) + ":" + field.field.Name
 			}
 		}
-		filtered, err := child.filter(value, normalizeDates, dates, childPath)
+		filtered, err := child.filter(value, normalizeDates, dates, childPath, scopes)
 		if err != nil {
 			return nil, err
 		}
