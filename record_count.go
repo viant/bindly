@@ -1,6 +1,7 @@
 package bindly
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -48,6 +49,9 @@ func (b *BindingSpec) countsSourceRecords() bool {
 	t := b.SourceType
 	for t != nil && t.Kind() == reflect.Pointer {
 		t = t.Elem()
+	}
+	if t == reflect.TypeFor[json.RawMessage]() {
+		return false
 	}
 	return t != nil && (t.Kind() == reflect.Slice || t.Kind() == reflect.Array || t.Kind() == reflect.Struct)
 }

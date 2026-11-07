@@ -6,6 +6,19 @@ capturing request data in the compiled plan.
 
 ## Core Model
 
+`Binder` is the public binding interface implemented by `*Injector`:
+
+```go
+type Binder interface {
+    Bind(context.Context, any, ...BindOption) error
+}
+```
+
+Consumers may accept `bindly.Binder` without depending on injector construction.
+Existing calls without options keep their behavior; compiled plans and other
+native options remain available. Specialized scope adapters may restrict options
+to preserve their own source or plan authority and must report unsupported options.
+
 - An application `Injector` owns provider definitions, transformers, type
   metadata, and generic resources.
 - `CompilePlan` converts component metadata into an immutable reusable plan.
@@ -147,8 +160,11 @@ retain ownership of their representation.
 A binding can opt into allocating an empty record for a supplied whole JSON
 `null` with `BindingSpec.BodyNullPolicy = "empty-record"`, or the tag
 `bodyNullPolicy=empty-record`. The target must be a direct pointer to a struct
-at `body/`, without source-type adaptations or transformers. Missing bodies
-still fail required binding. The allocated record is fresh, its body is
+at `body/`. Direct decoding and a `json.RawMessage` source with a transformer
+are supported; other source adaptations remain invalid. For a raw JSON decoder,
+explicit null uses the native empty-record allocator and skips the transformer,
+while non-null JSON reaches the transformer normally. Missing bodies still fail
+required binding. The allocated record is fresh, its body is
 present, and its field markers are all false. Invalid policies and targets
 fail plan compilation; other bindings retain their null behavior.
 
@@ -158,6 +174,13 @@ local JSON roundtrip with full value and presence equality; serialized replay
 bytes subsequently use public body decoding and do not carry that trust.
 
 ## Cache Semantics
+
+For caller-effective contracts, `provider/body.ValidateRequired(raw, targetType)`
+provides an explicit nested required-presence check before native decoding. It
+uses the same public field selection as body binding, skips hidden fields and
+opaque custom representations, and treats zero, false and null as supplied values.
+It does not install enum/value validation or alter `Source.Value` defaults.
+Call it only when the producer's contract requires this admission check.
 
 Each `Bind` owns an invocation cache keyed by provider owner, location and target
 type. A binding-level `cacheable` value overrides the provider's
@@ -370,3 +393,13 @@ GOWORK=off GO111MODULE=on go test -mod=readonly ./...
 GOWORK=off GO111MODULE=on go test -mod=readonly -race ./...
 GOWORK=off GO111MODULE=on go vet -mod=readonly ./...
 ```
+
+## Opt-in body representation
+
+`body.WithRepresentation(metadata)` supplies an immutable `shape.Representation`
+to typed JSON body resolution. The target remains `metadata.Original()`. Native
+filtering, explicit requiredness checks and presence reconstruction use the same
+metadata; hidden and retired field spellings are removed before a registered decoder
+runs. Registered decoders opt in with `UnmarshalWithRepresentation`; the default
+JSON decoder retains standard JSON semantics. Metadata-free behavior is unchanged.
+Caller-specific metadata is not retained in the global linked-type plan cache.

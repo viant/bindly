@@ -2,9 +2,11 @@ package bindly
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/viant/bindly/input"
+	bodyprovider "github.com/viant/bindly/provider/body"
 	"reflect"
 	"sort"
 	"strings"
@@ -256,7 +258,17 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 				result, err = s.replay.Replay.source(ctx, selectedBinding, sourceType)
 			}
 		} else {
-			result, err = s.resolveBindingResult(ctx, &binding.Location, sourceType, binding.Cacheable, binding.BodyNullPolicy)
+			providerPolicy := binding.BodyNullPolicy
+			if binding.rawBodyNullPolicy() {
+				providerPolicy = ""
+			}
+			result, err = s.resolveBindingResult(ctx, &binding.Location, sourceType, binding.Cacheable, providerPolicy)
+		}
+		if !preparedValue && err == nil && binding.rawBodyNullPolicy() && result.found && nilValue(result.value) {
+			result.value, err = bodyprovider.NewEmptyRecord(targetType)
+			result.metadata = nil
+			preparedValue = true
+			sourceType = targetType
 		}
 		// A default must not turn an absent source into a present-null diagnostic.
 		sourcePresent := result.found
@@ -272,6 +284,11 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 		var absent *requiredAbsenceError
 		if s.strictMissing && err == nil && (!result.found || nilValue(result.value)) && binding.Required != nil && *binding.Required {
 			collectionSource := sourceType
+			// Raw JSON is an encoded value, not a slice of records. Required
+			// null behavior follows the decoded destination's collection shape.
+			if collectionSource == reflect.TypeFor[json.RawMessage]() {
+				collectionSource = targetType
+			}
 			for collectionSource != nil && collectionSource.Kind() == reflect.Pointer {
 				collectionSource = collectionSource.Elem()
 			}

@@ -1,6 +1,7 @@
 package bodyjson
 
 import (
+	"bytes"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -12,7 +13,11 @@ import (
 // markPresence records authored JSON keys on generated set-marker holders.
 // JSON decoding remains encoding/json's responsibility; this traversal only
 // projects source presence onto its already-decoded typed object graph.
-func MarkPresence(target reflect.Value, raw json.RawMessage, public bool) error {
+func MarkPresence(target reflect.Value, raw json.RawMessage, public bool, representations ...*xshape.Representation) error {
+	var representation *xshape.Representation
+	if target.IsValid() {
+		representation = metadataForType(firstMetadata(representations), target.Type())
+	}
 	// Match filtering's ownership boundary before resetting markers or walking
 	// children: custom decoders may derive sparse flags from aliases and nulls.
 	if target.IsValid() && ownsJSONRepresentation(target.Type()) {
@@ -27,6 +32,7 @@ func MarkPresence(target reflect.Value, raw json.RawMessage, public bool) error 
 	if !target.IsValid() {
 		return nil
 	}
+	representation = metadataForType(representation, target.Type())
 	if target.Kind() == reflect.Slice || target.Kind() == reflect.Array {
 		var values []json.RawMessage
 		if err := json.Unmarshal(raw, &values); err != nil {
@@ -36,11 +42,14 @@ func MarkPresence(target reflect.Value, raw json.RawMessage, public bool) error 
 			if i >= target.Len() {
 				break
 			}
-			if err := MarkPresence(target.Index(i), value, public); err != nil {
+			if err := MarkPresence(target.Index(i), value, public, metadataElement(representation)); err != nil {
 				return err
 			}
 		}
 		return nil
+	}
+	if target.Kind() == reflect.Map && representation != nil {
+		return markMapMetadata(target, raw, public, representation)
 	}
 	if target.Kind() != reflect.Struct {
 		return nil
@@ -77,7 +86,7 @@ func MarkPresence(target reflect.Value, raw json.RawMessage, public bool) error 
 		}
 	}
 	if public {
-		plan, err := compileInternalPlan(target.Type(), map[reflect.Type]*internalPlan{})
+		plan, err := compileInternalPlan(target.Type(), nil, representation)
 		if err != nil {
 			return err
 		}
@@ -146,7 +155,8 @@ func markCanonicalPresence(target reflect.Value, object map[string]json.RawMessa
 			continue
 		}
 		if marker != "" {
-			if flag, err := xshape.Linked(target.Type()).StructField(marker + "." + item.field.Field.Name); err == nil && flag.Type.Kind() == reflect.Bool {
+			canonical := target.Type().FieldByIndex(item.field.Field.Index)
+			if flag, err := xshape.Linked(target.Type()).StructField(marker + "." + canonical.Name); err == nil && flag.Type.Kind() == reflect.Bool {
 				if err = (field.Access{Index: flag.Index, Type: flag.Type}).Set(target, true); err != nil {
 					return err
 				}
@@ -154,10 +164,65 @@ func markCanonicalPresence(target reflect.Value, object map[string]json.RawMessa
 		}
 		child, ok := (field.Access{Index: item.field.Field.Index, Type: item.field.Field.ReflectedType}).Value(target)
 		if ok {
-			if err := MarkPresence(child, raw, true); err != nil {
+			if err := MarkPresence(child, raw, true, item.representation); err != nil {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func metadataElement(representation *xshape.Representation) *xshape.Representation {
+	if representation == nil {
+		return nil
+	}
+	return representation.Elem()
+}
+func markMapMetadata(target reflect.Value, raw json.RawMessage, public bool, metadata *xshape.Representation) error {
+	if target.IsNil() {
+		return nil
+	}
+	// Keep source key order when distinct JSON spellings address one integer key.
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil
+	}
+	type entry struct {
+		key reflect.Value
+		raw json.RawMessage
+	}
+	entries := map[any]entry{}
+	for decoder.More() {
+		name, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		var member json.RawMessage
+		if err = decoder.Decode(&member); err != nil {
+			return err
+		}
+		encoded, _ := json.Marshal(name)
+		object := append([]byte{'{'}, encoded...)
+		object = append(object, []byte(":null}")...)
+		keys := reflect.New(reflect.MapOf(target.Type().Key(), reflect.TypeFor[json.RawMessage]()))
+		if err = json.Unmarshal(object, keys.Interface()); err != nil {
+			return err
+		}
+		key := keys.Elem().MapKeys()[0]
+		entries[key.Interface()] = entry{key, member}
+	}
+	for _, item := range entries {
+		value := target.MapIndex(item.key)
+		if !value.IsValid() {
+			continue
+		}
+		copy := reflect.New(value.Type()).Elem()
+		copy.Set(value)
+		if err = MarkPresence(copy, item.raw, public, metadataElement(metadata)); err != nil {
+			return err
+		}
+		target.SetMapIndex(item.key, copy)
 	}
 	return nil
 }

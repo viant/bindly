@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -16,23 +17,25 @@ import (
 )
 
 type internalPlan struct {
-	kind        reflect.Kind
-	fields      []internalField
-	item        *internalPlan
-	pointer     bool
-	arrayLen    int
-	timeLeaf    bool
-	pointerTime bool
-	internal    bool
-	inputs      bool
-	dates       bool
-	dateErr     error
+	representation *xshape.Representation
+	kind           reflect.Kind
+	fields         []internalField
+	item           *internalPlan
+	pointer        bool
+	arrayLen       int
+	timeLeaf       bool
+	pointerTime    bool
+	internal       bool
+	inputs         bool
+	dates          bool
+	dateErr        error
 }
 type internalField struct {
-	field  xshape.JSONField
-	denied bool
-	child  *internalPlan
-	input  inputRule
+	representation *xshape.Representation
+	field          xshape.JSONField
+	denied         bool
+	child          *internalPlan
+	input          inputRule
 }
 
 type internalPlanResult struct {
@@ -44,13 +47,22 @@ type internalPlanResult struct {
 // Only immutable, type-owned metadata is shared; raw bodies remain call-local.
 var internalPlans sync.Map
 
-func compileInternalPlan(target reflect.Type, _ map[reflect.Type]*internalPlan) (*internalPlan, error) {
-	if cached, ok := internalPlans.Load(target); ok {
+type internalPlanKey struct {
+	target         reflect.Type
+	representation *xshape.Representation
+}
+
+func compileInternalPlan(target reflect.Type, _ map[reflect.Type]*internalPlan, representations ...*xshape.Representation) (*internalPlan, error) {
+	representation := metadataForType(firstMetadata(representations), target)
+	if representation != nil && representation.Original() != target {
+		return nil, fmt.Errorf("body metadata type mismatch")
+	}
+	if cached, ok := internalPlans.Load(target); ok && representation == nil {
 		result := cached.(internalPlanResult)
 		return result.plan, result.err
 	}
-	memo := map[reflect.Type]*internalPlan{}
-	plan, err := buildInternalPlan(target, memo)
+	memo := map[internalPlanKey]*internalPlan{}
+	plan, err := buildInternalPlan(target, memo, representation)
 	if err == nil {
 		// A fixed point propagates relevance through mutually recursive types once
 		// at compilation, rather than rediscovering it for every JSON value.
@@ -84,57 +96,79 @@ func compileInternalPlan(target reflect.Type, _ map[reflect.Type]*internalPlan) 
 			}
 		}
 	}
+	// Caller metadata follows its owning variant's lifetime; do not retain
+	// arbitrary per-request variants in the global linked-type cache.
+	if representation != nil {
+		return plan, err
+	}
 	published, _ := internalPlans.LoadOrStore(target, internalPlanResult{plan: plan, err: err})
 	result := published.(internalPlanResult)
 	return result.plan, result.err
 }
 
-func buildInternalPlan(target reflect.Type, memo map[reflect.Type]*internalPlan) (*internalPlan, error) {
+func buildInternalPlan(target reflect.Type, memo map[internalPlanKey]*internalPlan, representation *xshape.Representation) (*internalPlan, error) {
+	representation = metadataForType(representation, target)
+	key := internalPlanKey{target, representation}
 	if target == nil {
 		return nil, nil
 	}
-	if plan, ok := memo[target]; ok {
+	if plan, ok := memo[key]; ok {
 		return plan, nil
 	}
 	original := target
 	for target.Kind() == reflect.Pointer {
 		target = target.Elem()
 	}
+	representation = metadataForType(representation, target)
 	// The builtin time owner is the one deliberate exception. Distinct named
 	// time types and all other JSON/Text owners keep their own representation.
 	if target == reflect.TypeFor[time.Time]() {
 		plan := &internalPlan{timeLeaf: true, pointerTime: original.Kind() == reflect.Pointer, dates: true}
-		memo[original] = plan
+		memo[key] = plan
 		return plan, nil
 	}
 	if ownsJSONRepresentation(original) {
 		return nil, nil
 	}
-	plan := &internalPlan{kind: target.Kind(), pointer: original.Kind() == reflect.Pointer}
+	plan := &internalPlan{kind: target.Kind(), pointer: original.Kind() == reflect.Pointer, representation: representation, internal: representation != nil}
 	if target.Kind() == reflect.Array {
 		plan.arrayLen = target.Len()
 	}
-	memo[original] = plan
+	memo[key] = plan
 	switch target.Kind() {
 	case reflect.Slice, reflect.Array, reflect.Map:
-		child, err := buildInternalPlan(target.Elem(), memo)
+		var childShape *xshape.Representation
+		if representation != nil {
+			childShape = representation.Elem()
+		}
+		child, err := buildInternalPlan(target.Elem(), memo, childShape)
 		if err != nil {
 			return nil, err
 		}
 		plan.item = child
 	case reflect.Struct:
-		fields, err := xshape.Linked(target).JSONFields()
+		var fields []xshape.JSONField
+		var err error
+		if representation != nil {
+			fields, err = representation.JSONFields()
+		} else {
+			fields, err = xshape.Linked(target).JSONFields()
+		}
 		if err != nil {
 			return nil, err
 		}
 		for _, field := range fields {
-			item := internalField{field: field, denied: internalOwner(target, field.Field.Index)}
+			var childShape *xshape.Representation
+			if representation != nil {
+				childShape = representation.FieldShapeByIndex(field.Field.Index)
+			}
+			item := internalField{field: field, representation: childShape, denied: internalOwnerMetadata(target, field.Field.Index, representation)}
 			if !item.denied {
 				item.input, err = compileInputRule(field.Field.Tag, field.Field.ReflectedType)
 				if err != nil {
 					return nil, err
 				}
-				item.child, err = buildInternalPlan(field.Field.ReflectedType, memo)
+				item.child, err = buildInternalPlan(field.Field.ReflectedType, memo, childShape)
 				if err != nil {
 					return nil, err
 				}
@@ -155,6 +189,27 @@ func buildInternalPlan(target reflect.Type, memo map[reflect.Type]*internalPlan)
 				}
 			}
 			plan.fields = append(plan.fields, item)
+		}
+		if representation != nil {
+			// Keep original JSON spellings that disappeared from the effective
+			// contract as denied entries. JSON winner selection omits json:"-"
+			// fields, but configured decoders must not receive their raw values.
+			originalFields, err := xshape.Linked(target).JSONFields()
+			if err != nil {
+				return nil, err
+			}
+			for _, originalField := range originalFields {
+				retained := false
+				for _, selected := range plan.fields {
+					if strings.EqualFold(selected.field.Name, originalField.Name) {
+						retained = true
+						break
+					}
+				}
+				if !retained {
+					plan.fields = append(plan.fields, internalField{field: originalField, denied: true})
+				}
+			}
 		}
 	}
 	return plan, nil
@@ -194,8 +249,8 @@ func (p *internalPlan) field(name string) *internalField {
 func excludeInternal(raw []byte, target reflect.Type) ([]byte, error) {
 	return filterPublic(raw, target, false)
 }
-func filterPublic(raw []byte, target reflect.Type, normalizeDates bool) ([]byte, error) {
-	plan, err := compileInternalPlan(target, map[reflect.Type]*internalPlan{})
+func filterPublic(raw []byte, target reflect.Type, normalizeDates bool, representations ...*xshape.Representation) ([]byte, error) {
+	plan, err := compileInternalPlan(target, nil, representations...)
 	if err != nil {
 		return nil, err
 	}
@@ -335,9 +390,7 @@ func (p *internalPlan) filterObject(raw []byte, normalizeDates bool, dates *date
 						changed = true
 						continue
 					}
-					if !bytes.Equal(value, converted) {
-						changed = true
-					}
+					changed = changed || !bytes.Equal(value, converted)
 					value = converted
 				}
 				child = field.child
@@ -386,4 +439,35 @@ func ownsJSONRepresentation(target reflect.Type) bool {
 		target = target.Elem()
 	}
 	return reflect.PointerTo(target).Implements(reflect.TypeFor[json.Unmarshaler]()) || reflect.PointerTo(target).Implements(reflect.TypeFor[encoding.TextUnmarshaler]())
+}
+
+func firstMetadata(representations []*xshape.Representation) *xshape.Representation {
+	if len(representations) == 0 {
+		return nil
+	}
+	return representations[0]
+}
+func metadataForType(representation *xshape.Representation, target reflect.Type) *xshape.Representation {
+	if representation == nil || !representation.Changed() {
+		return nil
+	}
+	for representation.Original() != target && representation.Original().Kind() == reflect.Pointer {
+		representation = representation.Elem()
+	}
+	return representation
+}
+func internalOwnerMetadata(target reflect.Type, index []int, representation *xshape.Representation) bool {
+	if representation == nil {
+		return internalOwner(target, index)
+	}
+	for _, i := range index {
+		for representation.Original().Kind() == reflect.Pointer {
+			representation = representation.Elem()
+		}
+		if representation.Field(i).Tag.Get("internal") == "true" {
+			return true
+		}
+		representation = representation.FieldShape(i)
+	}
+	return false
 }

@@ -15,18 +15,29 @@ import (
 	"github.com/viant/bindly/locator"
 	"github.com/viant/bindly/xform/conv"
 	"github.com/viant/structology"
+	xshape "github.com/viant/x/shape"
 )
 
 type Source struct {
-	deferred  *deferredSource
-	raw       []byte
-	mediaType string
-	exact     bool
-	aliases   map[string]string
-	decoders  *DecoderRegistry
-	multipart *multipart.Form
+	representation *xshape.Representation
+	deferred       *deferredSource
+	raw            []byte
+	mediaType      string
+	exact          bool
+	aliases        map[string]string
+	decoders       *DecoderRegistry
+	multipart      *multipart.Form
 }
 type Option func(*Source)
+
+// WithRepresentation opts into immutable field metadata over the linked body.
+func WithRepresentation(metadata *xshape.Representation) Option {
+	return func(s *Source) {
+		if metadata != nil && metadata.Changed() {
+			s.representation = metadata
+		}
+	}
+}
 
 func WithExactFieldNames() Option { return func(s *Source) { s.exact = true } }
 func New(raw []byte, contentType string, aliases map[string]string, options ...Option) (*Source, error) {
@@ -72,6 +83,9 @@ func (s *Source) ValueWithBodyNullPolicy(ctx context.Context, target reflect.Typ
 	}
 	if s == nil {
 		return nil, false, nil
+	}
+	if s.representation != nil && target != nil && target != reflect.TypeFor[json.RawMessage]() && s.representation.Original() != target {
+		return nil, false, &input.Error{Cause: fmt.Errorf("body representation expects %s, got %s", s.representation.Original(), target)}
 	}
 	raw := s.raw
 	if alias, ok := s.aliases[name]; ok {
@@ -135,10 +149,10 @@ func (s *Source) ValueWithBodyNullPolicy(ctx context.Context, target reflect.Typ
 			return append(json.RawMessage(nil), raw...), true, nil
 		}
 		if _, found := s.decoders.Lookup(s.mediaType); !found {
-			value, err := bodyjson.DecodePublic(raw, target)
+			value, err := bodyjson.DecodePublic(raw, target, s.representation)
 			return value, true, err
 		}
-		filtered, err := bodyjson.FilterPublic(raw, target)
+		filtered, err := bodyjson.FilterPublic(raw, target, s.representation)
 		if err != nil {
 			return nil, true, &input.Error{Cause: err}
 		}
@@ -147,6 +161,17 @@ func (s *Source) ValueWithBodyNullPolicy(ctx context.Context, target reflect.Typ
 		decode := json.Unmarshal
 		if decoder, found := s.decoders.Lookup(s.mediaType); found {
 			decode = decoder.Decode
+			if s.representation != nil {
+				metadataDecoder, ok := decoder.(interface {
+					UnmarshalWithRepresentation([]byte, any, *xshape.Representation) error
+				})
+				if !ok {
+					return nil, true, &input.Error{Cause: fmt.Errorf("configured body decoder does not accept representation metadata")}
+				}
+				decode = func(raw []byte, destination any) error {
+					return metadataDecoder.UnmarshalWithRepresentation(raw, destination, s.representation)
+				}
+			}
 		}
 		if err := decode(raw, value.Interface()); err != nil {
 			return nil, true, &input.Error{Cause: err}

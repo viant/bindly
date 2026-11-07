@@ -104,7 +104,11 @@ func (r *Replay) source(ctx context.Context, binding BindingSpec, target reflect
 	if err != nil {
 		return resolution{}, err
 	}
-	value, found, err := decoder.ValueWithBodyNullPolicy(ctx, target, "", binding.BodyNullPolicy)
+	policy := binding.BodyNullPolicy
+	if binding.rawBodyNullPolicy() {
+		policy = ""
+	}
+	value, found, err := decoder.ValueWithBodyNullPolicy(ctx, target, "", policy)
 	return resolution{value: value, found: found}, err
 }
 func (r *Replay) encodeField(binding BindingSpec, value any) ([]byte, error) {
