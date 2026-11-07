@@ -38,3 +38,9 @@ type SourceCapturer interface {
 type BodyNullPolicyLocator interface {
 	ValueWithBodyNullPolicy(context.Context, reflect.Type, string, string) (any, bool, error)
 }
+
+// PresenceLocator reports source suppliedness without interpreting its value.
+// Implementations retain ordinary source syntax, name selection and ambiguity rules.
+type PresenceLocator interface {
+	Presence(context.Context, string) (bool, error)
+}

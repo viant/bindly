@@ -131,9 +131,10 @@ type invocation struct {
 }
 
 type resolutionKey struct {
-	owner    *Injector
-	location state.Location
-	target   reflect.Type
+	presenceOnly bool
+	owner        *Injector
+	location     state.Location
+	target       reflect.Type
 }
 type resolution struct {
 	value    any
@@ -262,7 +263,7 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 			if binding.rawBodyNullPolicy() {
 				providerPolicy = ""
 			}
-			result, err = s.resolveBindingResult(ctx, &binding.Location, sourceType, binding.Cacheable, providerPolicy)
+			result, err = s.resolveBindingResult(ctx, &binding.Location, sourceType, binding.Cacheable, providerPolicy, binding.PresenceOnly)
 		}
 		if !preparedValue && err == nil && binding.rawBodyNullPolicy() && result.found && nilValue(result.value) {
 			result.value, err = bodyprovider.NewEmptyRecord(targetType)
@@ -398,9 +399,9 @@ func (s *invocation) resolveWithPolicy(ctx context.Context, location *state.Loca
 }
 
 func (s *invocation) resolveResult(ctx context.Context, location *state.Location, target reflect.Type, cacheable *bool) (resolution, error) {
-	return s.resolveBindingResult(ctx, location, target, cacheable, "")
+	return s.resolveBindingResult(ctx, location, target, cacheable, "", false)
 }
-func (s *invocation) resolveBindingResult(ctx context.Context, location *state.Location, target reflect.Type, cacheable *bool, bodyNullPolicy string) (resolution, error) {
+func (s *invocation) resolveBindingResult(ctx context.Context, location *state.Location, target reflect.Type, cacheable *bool, bodyNullPolicy string, presenceOnly bool) (resolution, error) {
 	if location == nil {
 		return resolution{}, fmt.Errorf("binding location is required")
 	}
@@ -426,10 +427,13 @@ func (s *invocation) resolveBindingResult(ctx context.Context, location *state.L
 		if bodyNullPolicy != "" {
 			shouldCache = false
 		}
-		cacheKey := resolutionKey{owner: current, location: *location, target: target}
+		cacheKey := resolutionKey{owner: current, location: *location, target: target, presenceOnly: presenceOnly}
 		// Scope identity qualifies persisted entries. Resolve child providers before
 		// considering any cached parent value, so cached defaults cannot mask overrides.
 		persistentKey := fmt.Sprintf("%p:%s:%s:%v:%s", current, location.Kind, location.In, target, s.sourceIdentity)
+		if presenceOnly {
+			persistentKey += ":presenceOnly"
+		}
 		persistent := s.persistent
 		if s.captureSources {
 			persistent = nil
@@ -469,7 +473,14 @@ func (s *invocation) resolveBindingResult(ctx context.Context, location *state.L
 		if s.captureSources {
 			raw, _ = valueLocator.(locator.SourceCapturer)
 		}
-		if raw != nil {
+		if presenceOnly {
+			presence, ok := valueLocator.(locator.PresenceLocator)
+			if !ok {
+				return resolution{}, fmt.Errorf("provider %s does not support presenceOnly", location.Kind)
+			}
+			found, err = presence.Presence(ctx, location.In)
+			value = found
+		} else if raw != nil {
 			value, found, err = raw.CaptureSource(ctx, target, location.In)
 		} else if bodyNullPolicy != "" {
 			policyLocator, ok := valueLocator.(locator.BodyNullPolicyLocator)

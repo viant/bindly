@@ -59,6 +59,10 @@ func (p *replayProvider) ValueWithBodyNullPolicy(ctx context.Context, target ref
 		return nil, false, nil
 	}
 
+	if binding.PresenceOnly {
+		return nil, false, fmt.Errorf("presence-only replay location %s has no value authority", name)
+	}
+
 	// A whole-body policy always projects original JSON under the receiving
 	// binding's policy, so an opted parent cannot normalize a strict dependency.
 	if binding.BodyNullPolicy != "" || policy != "" {
@@ -91,9 +95,24 @@ func (p *replayProvider) CaptureSource(ctx context.Context, target reflect.Type,
 	if !ok {
 		return nil, false, nil
 	}
+	if binding.PresenceOnly {
+		return nil, false, fmt.Errorf("presence-only replay location %s has no raw value authority", name)
+	}
 	raw, found := p.replay.raw[binding.Name]
 	if !found {
 		return nil, false, nil
 	}
 	return append(json.RawMessage(nil), raw...), true, nil
+}
+
+func (p *replayProvider) Presence(ctx context.Context, name string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	binding, ok := p.fields[name]
+	if !ok {
+		return false, nil
+	}
+	_, found := p.replay.raw[binding.Name]
+	return found, nil
 }

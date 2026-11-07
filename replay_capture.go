@@ -42,7 +42,7 @@ func (p *ReplayPlan) CaptureSources(ctx context.Context, providers []locator.Pro
 			}
 			target = p.plan.fields[path].Type
 		}
-		value, err := scope.resolveResult(ctx, &binding.Location, target, binding.Cacheable)
+		value, err := scope.resolveBindingResult(ctx, &binding.Location, target, binding.Cacheable, "", binding.PresenceOnly)
 		if err != nil {
 			return nil, &BindingError{Path: path, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
 		}

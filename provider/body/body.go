@@ -106,26 +106,17 @@ func (s *Source) ValueWithBodyNullPolicy(ctx context.Context, target reflect.Typ
 	}
 	if s.mediaType == "application/json" || strings.HasSuffix(s.mediaType, "+json") || s.mediaType == "" {
 		if name != "" {
-			var object map[string]json.RawMessage
-			if err := json.Unmarshal(raw, &object); err != nil {
+			var found bool
+			var err error
+			raw, found, err = s.selectJSON(name)
+			if err != nil {
 				return nil, false, &input.Error{Cause: err}
 			}
-			var ok bool
-			raw, ok = object[name]
-			if !ok && !s.exact {
-				for key, value := range object {
-					if strings.EqualFold(key, name) {
-						if ok {
-							return nil, false, &input.Error{Cause: fmt.Errorf("ambiguous body field %q", name)}
-						}
-						raw, ok = value, true
-					}
-				}
-			}
-			if !ok {
+			if !found {
 				return nil, false, nil
 			}
 		}
+
 		if strings.TrimSpace(string(raw)) == "null" {
 			if policy == "empty-record" {
 				var literal json.RawMessage

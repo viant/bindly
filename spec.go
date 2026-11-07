@@ -13,6 +13,7 @@ import (
 )
 
 type BindingSpec struct {
+	PresenceOnly                                                             bool
 	ResolutionGroup                                                          *ResolutionGroupSpec
 	BodyNullPolicy                                                           string
 	MarkerField                                                              string
@@ -140,6 +141,15 @@ func bindingSpecFromField(field reflect.StructField, key string, aliases bool) (
 			case "expectedReturned":
 				result.ExpectedReturned = &v
 			}
+		case "presenceOnly":
+			if value == "" {
+				value = "true"
+			}
+			v, err := strconv.ParseBool(value)
+			if err != nil {
+				return err
+			}
+			result.PresenceOnly = v
 		case "bodyNullPolicy":
 			result.BodyNullPolicy = value
 		case "cardinality":
@@ -204,4 +214,18 @@ func (b BindingSpec) ValidateBodyNullPolicy(target reflect.Type) error {
 // transformation, just as it is for a directly decoded body.
 func (b BindingSpec) rawBodyNullPolicy() bool {
 	return b.BodyNullPolicy == "empty-record" && b.SourceType == reflect.TypeFor[json.RawMessage]() && b.Transformer != nil
+}
+
+// ValidatePresenceOnly checks the bounded named JSON source-presence projection.
+func (b BindingSpec) ValidatePresenceOnly(target reflect.Type) error {
+	if !b.PresenceOnly {
+		return nil
+	}
+	if b.Location.Kind != "body" || b.Location.In == "" || target == nil || target.Kind() != reflect.Bool {
+		return fmt.Errorf("presenceOnly requires a bool target at a named body location")
+	}
+	if (b.SourceType != nil && b.SourceType != target) || b.Transformer != nil || b.BodyNullPolicy != "" || b.DefaultValue != nil || (b.DataType != "" && b.DataType != target.String()) || b.MinAllowedRecords != nil || b.MaxAllowedRecords != nil || b.ExpectedReturned != nil {
+		return fmt.Errorf("presenceOnly does not support source adaptation, conversion, defaults or record policies")
+	}
+	return nil
 }

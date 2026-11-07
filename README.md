@@ -403,3 +403,20 @@ metadata; hidden and retired field spellings are removed before a registered dec
 runs. Registered decoders opt in with `UnmarshalWithRepresentation`; the default
 JSON decoder retains standard JSON semantics. Metadata-free behavior is unchanged.
 Caller-specific metadata is not retained in the global linked-type plan cache.
+
+### Named JSON source presence
+
+A bool binding can opt into `parameter:"kind=body,in=channelV2,presenceOnly=true"`.
+It receives whether the named source member was supplied; explicit JSON null counts
+as supplied. Its normal `Has` marker also records suppliedness. The body provider
+validates the complete JSON syntax and uses ordinary named-body exact/fold/alias
+selection, but does not decode the selected value. This permits a handler to check
+required suppliedness before using an existing named scope for typed conversion.
+
+This mode requires a named JSON body source, a bool target, and a provider supporting
+`locator.PresenceLocator`. Source adaptation, transformers, defaults and body null
+policies are rejected. It does not expose an auxiliary public bool transport field:
+the integrating framework must keep that field internal and retain a typed owner
+for the public property's schema. Cache keys distinguish presence from value binding.
+A captured presence-only replay can project presence, but cannot supply the original
+value or raw JSON to another component; ambiguous replay locations remain errors.

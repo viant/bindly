@@ -120,6 +120,9 @@ func (i *Injector) CompilePlan(target reflect.Type, specs ...BindingSpec) (*Plan
 				*metadata = cloned
 			}
 		}
+		if err := spec.ValidatePresenceOnly(resolved.Type); err != nil {
+			return nil, fmt.Errorf("binding %s: %w", spec.Path, err)
+		}
 		if err := spec.ValidateBodyNullPolicy(resolved.Type); err != nil {
 			return nil, fmt.Errorf("binding %s: %w", spec.Path, err)
 		}

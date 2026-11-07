@@ -64,15 +64,15 @@ func (l *composedLocator) Value(ctx context.Context, target reflect.Type, name s
 	return l.ValueInScope(ctx, nil, target, name)
 }
 func (l *composedLocator) ValueInScope(ctx context.Context, scope Scope, target reflect.Type, name string) (any, bool, error) {
-	return l.value(ctx, scope, target, name, false, "")
+	return l.value(ctx, scope, target, name, false, "", false)
 }
 func (l *composedLocator) CaptureSource(ctx context.Context, target reflect.Type, name string) (any, bool, error) {
-	return l.value(ctx, nil, target, name, true, "")
+	return l.value(ctx, nil, target, name, true, "", false)
 }
 func (l *composedLocator) ValueWithBodyNullPolicy(ctx context.Context, target reflect.Type, name, policy string) (any, bool, error) {
-	return l.value(ctx, nil, target, name, false, policy)
+	return l.value(ctx, nil, target, name, false, policy, false)
 }
-func (l *composedLocator) value(ctx context.Context, scope Scope, target reflect.Type, name string, capture bool, policy string) (any, bool, error) {
+func (l *composedLocator) value(ctx context.Context, scope Scope, target reflect.Type, name string, capture bool, policy string, presenceOnly bool) (any, bool, error) {
 	for _, layer := range l.provider.layers {
 		candidate := layer.Provider.Locate(l.state)
 		if candidate == nil {
@@ -85,7 +85,14 @@ func (l *composedLocator) value(ctx context.Context, scope Scope, target reflect
 		if capture {
 			raw, _ = candidate.(SourceCapturer)
 		}
-		if raw != nil {
+		if presenceOnly {
+			presence, ok := candidate.(PresenceLocator)
+			if !ok {
+				return nil, false, fmt.Errorf("provider layer %s does not support presenceOnly", layer.Name)
+			}
+			found, err = presence.Presence(ctx, name)
+			value = found
+		} else if raw != nil {
 			value, found, err = raw.CaptureSource(ctx, target, name)
 		} else if policy != "" {
 			policyLocator, ok := candidate.(BodyNullPolicyLocator)
@@ -114,4 +121,9 @@ func (l *composedLocator) Owns(name string) bool {
 		}
 	}
 	return false
+}
+
+func (l *composedLocator) Presence(ctx context.Context, name string) (bool, error) {
+	_, found, err := l.value(ctx, nil, nil, name, false, "", true)
+	return found, err
 }
