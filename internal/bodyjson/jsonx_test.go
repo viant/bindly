@@ -20,3 +20,14 @@ func TestInputRuleScope(t *testing.T) {
 		}
 	}
 }
+
+func TestNullOmitTypeScope(t *testing.T) {
+	for _, typ := range []reflect.Type{reflect.TypeFor[float64](), reflect.TypeFor[*float64](), reflect.TypeFor[string](), reflect.TypeFor[[]string](), reflect.TypeFor[map[string]int](), reflect.TypeFor[struct{ Value int }]()} {
+		if _, err := compileInputRule(`jsonx:"null=omit"`, typ); err != nil {
+			t.Errorf("%v: %v", typ, err)
+		}
+	}
+	if _, err := compileInputRule(`jsonx:"null=omit"`, reflect.TypeFor[opaqueDiagnostic]()); err == nil {
+		t.Error("custom JSON owner overridden")
+	}
+}

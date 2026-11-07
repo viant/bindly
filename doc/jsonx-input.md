@@ -1,4 +1,4 @@
-# Native integer input options
+# Native JSON input options
 
 A native JSON body field can explicitly accept booleans as integer storage values:
 
@@ -16,8 +16,9 @@ pointer nil and its marker false. Other fields retain supplied-null presence.
 With duplicate keys, omitted null occurrences do not erase an earlier value;
 ordinary supplied values retain the decoder's lexical overwrite behavior.
 
-These options apply to `int` fields and pointers to `int` fields through the
-existing canonical public-field plan. Internal members remain excluded before
+`boolToInt` applies to `int` fields and pointers to `int` fields. `null=omit`
+can be used independently on native-supported fields of any type, including
+`float64` and `*float64`. Both use the existing canonical public-field plan. Internal members remain excluded before
 conversion. Nested rows and named body parameters use the same native provider.
 Raw source capture is unchanged. Configured JSON decoders retain representation
 ownership; their filtering path does not apply these native conversions. Types

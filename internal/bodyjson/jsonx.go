@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// inputRule augments native decoding only on explicitly authored integer fields.
+// inputRule augments native decoding only on explicitly authored fields.
 type inputRule struct{ boolToInt, omitNull bool }
 
 func compileInputRule(tag reflect.StructTag, typ reflect.Type) (inputRule, error) {
@@ -26,6 +26,9 @@ func compileInputRule(tag reflect.StructTag, typ reflect.Type) (inputRule, error
 	if ownsJSONRepresentation(typ) {
 		return rule, fmt.Errorf("jsonx input rules cannot override custom JSON ownership on %v", typ)
 	}
+	if !rule.boolToInt {
+		return rule, nil
+	}
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
@@ -33,7 +36,7 @@ func compileInputRule(tag reflect.StructTag, typ reflect.Type) (inputRule, error
 	case reflect.Int:
 		return rule, nil
 	}
-	return rule, fmt.Errorf("jsonx boolToInt/null=omit requires an int field, got %v", typ)
+	return rule, fmt.Errorf("jsonx boolToInt requires an int field, got %v", typ)
 }
 func (r inputRule) active() bool { return r.boolToInt || r.omitNull }
 func (r inputRule) apply(raw []byte) ([]byte, bool) {
