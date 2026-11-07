@@ -20,12 +20,17 @@ type internalPlan struct {
 	representation *xshape.Representation
 	kind           reflect.Kind
 	fields         []internalField
+	names          *format.InputNameMatcher
+	aliases        bool
 	item           *internalPlan
 	pointer        bool
 	arrayLen       int
 	timeLeaf       bool
 	pointerTime    bool
+	timePolicy     *format.Tag
 	internal       bool
+	inputs         bool
+	declaredDates  bool
 	dates          bool
 	dateErr        error
 }
@@ -34,6 +39,7 @@ type internalField struct {
 	field          xshape.JSONField
 	denied         bool
 	child          *internalPlan
+	input          inputRule
 }
 
 type internalPlanResult struct {
@@ -68,25 +74,36 @@ func compileInternalPlan(target reflect.Type, _ map[reflect.Type]*internalPlan, 
 		for changed {
 			changed = false
 			for _, node := range memo {
-				internal, dates := node.internal, node.dates
+				internal, dates, inputs := node.internal, node.dates, node.inputs
+				declaredDates := node.declaredDates
+				aliases := node.aliases
 				dateErr := node.dateErr
 				if node.item != nil {
+					aliases = aliases || node.item.aliases
 					internal, dates = internal || node.item.internal, dates || node.item.dates
+					inputs = inputs || node.item.inputs
+					declaredDates = declaredDates || node.item.declaredDates
 					if dateErr == nil {
 						dateErr = node.item.dateErr
 					}
 				}
 				for _, field := range node.fields {
 					internal = internal || field.denied
+					inputs = inputs || field.input.active()
 					if field.child != nil {
+						aliases = aliases || field.child.aliases
 						internal, dates = internal || field.child.internal, dates || field.child.dates
+						inputs = inputs || field.child.inputs
+						declaredDates = declaredDates || field.child.declaredDates
 						if dateErr == nil {
 							dateErr = field.child.dateErr
 						}
 					}
 				}
-				if internal != node.internal || dates != node.dates || node.dateErr == nil && dateErr != nil {
-					node.internal, node.dates, node.dateErr, changed = internal, dates, dateErr, true
+				if aliases != node.aliases || internal != node.internal || dates != node.dates || inputs != node.inputs || declaredDates != node.declaredDates || node.dateErr == nil && dateErr != nil {
+					node.aliases = aliases
+					node.declaredDates = declaredDates
+					node.internal, node.dates, node.inputs, node.dateErr, changed = internal, dates, inputs, dateErr, true
 				}
 			}
 		}
@@ -159,6 +176,10 @@ func buildInternalPlan(target reflect.Type, memo map[internalPlanKey]*internalPl
 			}
 			item := internalField{field: field, representation: childShape, denied: internalOwnerMetadata(target, field.Field.Index, representation)}
 			if !item.denied {
+				item.input, err = compileInputRule(field.Field.Tag, field.Field.ReflectedType)
+				if err != nil {
+					return nil, err
+				}
 				item.child, err = buildInternalPlan(field.Field.ReflectedType, memo, childShape)
 				if err != nil {
 					return nil, err
@@ -174,7 +195,12 @@ func buildInternalPlan(target reflect.Type, memo map[internalPlanKey]*internalPl
 							plan.dateErr = err
 						}
 					}
-					if formatting != nil && formatting.TimeLayout != "" {
+					if formatting.HasTimeInputPolicy() {
+						copy := *item.child
+						copy.timePolicy = formatting
+						copy.declaredDates = true
+						item.child = &copy
+					} else if formatting != nil && formatting.TimeLayout != "" {
 						item.child = nil
 					}
 				}
@@ -203,6 +229,25 @@ func buildInternalPlan(target reflect.Type, memo map[internalPlanKey]*internalPl
 			}
 		}
 	}
+	if target.Kind() == reflect.Struct {
+		names := make([]format.InputName, len(plan.fields))
+		for i, selected := range plan.fields {
+			names[i].Name = selected.field.Name
+			if strings.Contains(strings.ToLower(selected.field.Field.Tag.Get("format")), "inputnames=") {
+				policy, err := format.Parse(selected.field.Field.Tag)
+				if err != nil {
+					return nil, err
+				}
+				names[i].Aliases = policy.InputNames
+				plan.aliases = plan.aliases || policy.InputNames != ""
+			}
+		}
+		var err error
+		plan.names, err = format.NewInputNameMatcher(names)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return plan, nil
 }
 func internalOwner(root reflect.Type, index []int) bool {
@@ -222,17 +267,12 @@ func (p *internalPlan) hasInternal(_ map[*internalPlan]bool) bool {
 	return p != nil && p.internal
 }
 func (p *internalPlan) relevant(normalizeDates bool) bool {
-	return p != nil && (p.internal || normalizeDates && p.dates)
+	return p != nil && (p.internal || normalizeDates && (p.dates || p.inputs))
 }
 func (p *internalPlan) field(name string) *internalField {
-	for i := range p.fields {
-		if p.fields[i].field.Name == name {
-			return &p.fields[i]
-		}
-	}
-	for i := range p.fields {
-		if strings.EqualFold(p.fields[i].field.Name, name) {
-			return &p.fields[i]
+	if p.names != nil {
+		if index := p.names.Match(name); index >= 0 {
+			return &p.fields[index]
 		}
 	}
 	return nil
@@ -261,6 +301,11 @@ func filterPublic(raw []byte, target reflect.Type, normalizeDates bool, represen
 }
 func (p *internalPlan) filter(raw []byte, normalizeDates bool, dates *dateState, path string) ([]byte, error) {
 	if !p.relevant(normalizeDates) {
+		return raw, nil
+	}
+	if normalizeDates && p.timeLeaf && p.timePolicy != nil {
+		// The native standard decoder consumes this original scalar directly.
+		// Text normalization would lose int64 epoch range and duplicate state.
 		return raw, nil
 	}
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
@@ -374,6 +419,15 @@ func (p *internalPlan) filterObject(raw []byte, normalizeDates bool, dates *date
 				if field.denied {
 					changed = true
 					continue
+				}
+				if normalizeDates && field.input.active() {
+					converted, omit := field.input.apply(value)
+					if omit {
+						changed = true
+						continue
+					}
+					changed = changed || !bytes.Equal(value, converted)
+					value = converted
 				}
 				child = field.child
 				childPath = path + "/f" + strconv.Itoa(len(field.field.Name)) + ":" + field.field.Name

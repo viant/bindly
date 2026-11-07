@@ -385,6 +385,16 @@ func (s *source) Value(ctx context.Context, target reflect.Type, name string) (a
 	}
 	collection := target != nil && (target.Kind() == reflect.Slice || target.Kind() == reflect.Array) && target != reflect.TypeOf([]byte{})
 	if values, ok := value.([]string); ok && !collection && target != nil && target.Kind() != reflect.Interface && len(values) > 0 {
+		// Preserve an explicitly empty scalar query integer as present zero.
+		// Query policy has already handled absence; other sources and repeated
+		// values retain their existing conversion behavior.
+		if s.kind == QueryKind && len(values) == 1 && values[0] == "" {
+			switch target.Kind() {
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				return reflect.Zero(target).Interface(), true, nil
+			}
+		}
 		return values[0], true, nil
 	}
 	return value, true, nil
