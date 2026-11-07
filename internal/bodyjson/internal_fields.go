@@ -22,6 +22,7 @@ type internalPlan struct {
 	fields         []internalField
 	names          *format.InputNameMatcher
 	aliases        bool
+	selection      bool
 	item           *internalPlan
 	pointer        bool
 	arrayLen       int
@@ -77,9 +78,11 @@ func compileInternalPlan(target reflect.Type, _ map[reflect.Type]*internalPlan, 
 				internal, dates, inputs := node.internal, node.dates, node.inputs
 				declaredDates := node.declaredDates
 				aliases := node.aliases
+				selection := node.selection
 				dateErr := node.dateErr
 				if node.item != nil {
 					aliases = aliases || node.item.aliases
+					selection = selection || node.item.selection
 					internal, dates = internal || node.item.internal, dates || node.item.dates
 					inputs = inputs || node.item.inputs
 					declaredDates = declaredDates || node.item.declaredDates
@@ -92,6 +95,7 @@ func compileInternalPlan(target reflect.Type, _ map[reflect.Type]*internalPlan, 
 					inputs = inputs || field.input.active()
 					if field.child != nil {
 						aliases = aliases || field.child.aliases
+						selection = selection || field.child.selection
 						internal, dates = internal || field.child.internal, dates || field.child.dates
 						inputs = inputs || field.child.inputs
 						declaredDates = declaredDates || field.child.declaredDates
@@ -100,8 +104,9 @@ func compileInternalPlan(target reflect.Type, _ map[reflect.Type]*internalPlan, 
 						}
 					}
 				}
-				if aliases != node.aliases || internal != node.internal || dates != node.dates || inputs != node.inputs || declaredDates != node.declaredDates || node.dateErr == nil && dateErr != nil {
+				if selection != node.selection || aliases != node.aliases || internal != node.internal || dates != node.dates || inputs != node.inputs || declaredDates != node.declaredDates || node.dateErr == nil && dateErr != nil {
 					node.aliases = aliases
+					node.selection = selection
 					node.declaredDates = declaredDates
 					node.internal, node.dates, node.inputs, node.dateErr, changed = internal, dates, inputs, dateErr, true
 				}
@@ -234,14 +239,21 @@ func buildInternalPlan(target reflect.Type, memo map[internalPlanKey]*internalPl
 		policies := make([]*format.Tag, len(plan.fields))
 		for i, selected := range plan.fields {
 			names[i].Name = selected.field.Name
-			if strings.Contains(strings.ToLower(selected.field.Field.Tag.Get("format")), "inputnames") {
+			policyText := strings.ToLower(selected.field.Field.Tag.Get("format"))
+			if strings.Contains(policyText, "inputnames") || strings.Contains(policyText, "inputgroup") || strings.Contains(policyText, "inputpriority") || strings.Contains(policyText, "inputcase") {
 				policy, err := format.Parse(selected.field.Field.Tag)
 				if err != nil {
 					return nil, err
 				}
+				if selected.denied {
+					policy.InputGroup = ""
+					policy.InputPriority = ""
+					policy.InputCase = ""
+				}
 				names[i].Aliases = policy.InputNames
 				policies[i] = policy
-				plan.aliases = plan.aliases || policy.InputNames != ""
+				plan.aliases = plan.aliases || policy.InputNames != "" || policy.HasInputNamePolicy()
+				plan.selection = plan.selection || policy.InputGroup != "" || policy.InputCase != ""
 			}
 		}
 		var err error

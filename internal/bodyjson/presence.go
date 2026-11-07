@@ -48,8 +48,18 @@ func MarkPresence(target reflect.Value, raw json.RawMessage, public bool, repres
 		}
 		return nil
 	}
-	if target.Kind() == reflect.Map && representation != nil {
-		return markMapMetadata(target, raw, public, representation)
+	if target.Kind() == reflect.Map {
+		traverse := representation != nil
+		if !traverse && public {
+			plan, err := compileInternalPlan(target.Type(), nil)
+			if err != nil {
+				return err
+			}
+			traverse = plan != nil && plan.selection
+		}
+		if traverse {
+			return markMapMetadata(target, raw, public, representation)
+		}
 	}
 	if target.Kind() != reflect.Struct {
 		return nil
