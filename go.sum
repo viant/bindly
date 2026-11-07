@@ -958,6 +958,8 @@ github.com/viant/structology v0.10.2-0.20261107165510-2ead0915d565 h1:DVNtfdfGep
 github.com/viant/structology v0.10.2-0.20261107165510-2ead0915d565/go.mod h1:LVFAv5GOHJURdfR0aW6zh93hFafyaVD77WkgbOLsS6c=
 github.com/viant/structology v0.10.2-0.20261107173851-3fd1eb271204 h1:XmJxqmSNXwBOikUqxYdht1+ckRHFzpghqafDOomAOT4=
 github.com/viant/structology v0.10.2-0.20261107173851-3fd1eb271204/go.mod h1:BogFkexmR/SpqdLFAL2xkDvfBDwoFyaVAlUjYscTfbQ=
+github.com/viant/structology v0.10.2-0.20261107181707-4012295c1f71 h1:3gyk2FMKo989Z04LZypHcKd+SN2YImgDSuyMDqg3WVQ=
+github.com/viant/structology v0.10.2-0.20261107181707-4012295c1f71/go.mod h1:GhiYYgK3uGHz4O8qh4aXvW36ULkcDZIyLdDb3tMPcnM=
 github.com/viant/tagly v0.2.0 h1:bZhGDBtZbblO83omlAsJ9PnYVAbXYr9syxY6HUgT6iw=
 github.com/viant/tagly v0.2.0/go.mod h1:vV8QgJkhug+X+qyKds8av0fhjD+4u7IhNtowL1KGQ5A=
 github.com/viant/tagly v0.3.0 h1:Y8IckveeSrroR8yisq4MBdxhcNqf4v8II01uCpamh4E=
@@ -972,6 +974,8 @@ github.com/viant/tagly v0.4.2-0.20261107164157-6e08b192d4f1 h1:LmyZ7yeoXg3I67P6l
 github.com/viant/tagly v0.4.2-0.20261107164157-6e08b192d4f1/go.mod h1:PauQQkHmAvL5lFGr4gIgi+PE0aUPggBIBYN34sX2Oes=
 github.com/viant/tagly v0.4.2-0.20261107173313-2c9b8a100283 h1:y9GBT2uCSLfU9CxaUMHFx1QRXEqbk/qTg80XnDLHToA=
 github.com/viant/tagly v0.4.2-0.20261107173313-2c9b8a100283/go.mod h1:PauQQkHmAvL5lFGr4gIgi+PE0aUPggBIBYN34sX2Oes=
+github.com/viant/tagly v0.4.2-0.20261107175818-942858d975e7 h1:FoYRKZ+kdsy7oS3uNHFT0s4XH6qSWPKmrHg+o3GE2eU=
+github.com/viant/tagly v0.4.2-0.20261107175818-942858d975e7/go.mod h1:PauQQkHmAvL5lFGr4gIgi+PE0aUPggBIBYN34sX2Oes=
 github.com/viant/toolbox v0.24.0/go.mod h1:OxMCG57V0PXuIP2HNQrtJf2CjqdmbrOx5EkMILuUhzM=
 github.com/viant/toolbox v0.34.5/go.mod h1:OxMCG57V0PXuIP2HNQrtJf2CjqdmbrOx5EkMILuUhzM=
 github.com/viant/toolbox v0.34.6-0.20221112031702-3e7cdde7f888 h1:iQ9ehV+Qev9s/L4eXFFaw3zvZVid+xTT5fW3G3ldEdk=

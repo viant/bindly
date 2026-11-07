@@ -20,6 +20,8 @@ type internalPlan struct {
 	representation *xshape.Representation
 	kind           reflect.Kind
 	fields         []internalField
+	names          *format.InputNameMatcher
+	aliases        bool
 	item           *internalPlan
 	pointer        bool
 	arrayLen       int
@@ -74,8 +76,10 @@ func compileInternalPlan(target reflect.Type, _ map[reflect.Type]*internalPlan, 
 			for _, node := range memo {
 				internal, dates, inputs := node.internal, node.dates, node.inputs
 				declaredDates := node.declaredDates
+				aliases := node.aliases
 				dateErr := node.dateErr
 				if node.item != nil {
+					aliases = aliases || node.item.aliases
 					internal, dates = internal || node.item.internal, dates || node.item.dates
 					inputs = inputs || node.item.inputs
 					declaredDates = declaredDates || node.item.declaredDates
@@ -87,6 +91,7 @@ func compileInternalPlan(target reflect.Type, _ map[reflect.Type]*internalPlan, 
 					internal = internal || field.denied
 					inputs = inputs || field.input.active()
 					if field.child != nil {
+						aliases = aliases || field.child.aliases
 						internal, dates = internal || field.child.internal, dates || field.child.dates
 						inputs = inputs || field.child.inputs
 						declaredDates = declaredDates || field.child.declaredDates
@@ -95,7 +100,8 @@ func compileInternalPlan(target reflect.Type, _ map[reflect.Type]*internalPlan, 
 						}
 					}
 				}
-				if internal != node.internal || dates != node.dates || inputs != node.inputs || declaredDates != node.declaredDates || node.dateErr == nil && dateErr != nil {
+				if aliases != node.aliases || internal != node.internal || dates != node.dates || inputs != node.inputs || declaredDates != node.declaredDates || node.dateErr == nil && dateErr != nil {
+					node.aliases = aliases
 					node.declaredDates = declaredDates
 					node.internal, node.dates, node.inputs, node.dateErr, changed = internal, dates, inputs, dateErr, true
 				}
@@ -223,6 +229,25 @@ func buildInternalPlan(target reflect.Type, memo map[internalPlanKey]*internalPl
 			}
 		}
 	}
+	if target.Kind() == reflect.Struct {
+		names := make([]format.InputName, len(plan.fields))
+		for i, selected := range plan.fields {
+			names[i].Name = selected.field.Name
+			if strings.Contains(strings.ToLower(selected.field.Field.Tag.Get("format")), "inputnames=") {
+				policy, err := format.Parse(selected.field.Field.Tag)
+				if err != nil {
+					return nil, err
+				}
+				names[i].Aliases = policy.InputNames
+				plan.aliases = plan.aliases || policy.InputNames != ""
+			}
+		}
+		var err error
+		plan.names, err = format.NewInputNameMatcher(names)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return plan, nil
 }
 func internalOwner(root reflect.Type, index []int) bool {
@@ -245,14 +270,9 @@ func (p *internalPlan) relevant(normalizeDates bool) bool {
 	return p != nil && (p.internal || normalizeDates && (p.dates || p.inputs))
 }
 func (p *internalPlan) field(name string) *internalField {
-	for i := range p.fields {
-		if p.fields[i].field.Name == name {
-			return &p.fields[i]
-		}
-	}
-	for i := range p.fields {
-		if strings.EqualFold(p.fields[i].field.Name, name) {
-			return &p.fields[i]
+	if p.names != nil {
+		if index := p.names.Match(name); index >= 0 {
+			return &p.fields[index]
 		}
 	}
 	return nil

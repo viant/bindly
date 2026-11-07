@@ -90,6 +90,29 @@ func MarkPresence(target reflect.Value, raw json.RawMessage, public bool, repres
 		if err != nil {
 			return err
 		}
+		if plan != nil && plan.aliases && plan.kind == reflect.Struct {
+			// Resolve synonyms in source order, using the same selected-field
+			// identity as filtering and decoding, never map iteration order.
+			canonical := map[string]json.RawMessage{}
+			decoder := json.NewDecoder(bytes.NewReader(raw))
+			if _, err := decoder.Token(); err != nil {
+				return err
+			}
+			for decoder.More() {
+				key, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				var member json.RawMessage
+				if err = decoder.Decode(&member); err != nil {
+					return err
+				}
+				if selected := plan.field(key.(string)); selected != nil && !selected.denied {
+					canonical[selected.field.Name] = member
+				}
+			}
+			return markCanonicalPresence(target, canonical, marker, plan)
+		}
 		if plan != nil && plan.hasInternal(map[*internalPlan]bool{}) && plan.kind == reflect.Struct {
 			return markCanonicalPresence(target, object, marker, plan)
 		}
