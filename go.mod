@@ -5,8 +5,8 @@ go 1.25.0
 require (
 	github.com/stretchr/testify v1.11.1
 	github.com/viant/afs v1.29.0
-	github.com/viant/structology v0.10.2-0.20261106041415-f131ad778c85
-	github.com/viant/tagly v0.4.2-0.20261107044640-f8cc13f24ac5
+	github.com/viant/structology v0.10.2-0.20261107064729-0f36e2fcee40
+	github.com/viant/tagly v0.4.2-0.20261107063809-009ed2996dae
 )
 
 require (
@@ -23,7 +23,7 @@ require (
 	github.com/viant/parsly v0.3.3 // indirect
 	github.com/viant/x v0.6.1-0.20261106041415-0487ec66884b
 	github.com/viant/xreflect v0.7.3 // indirect
-	github.com/viant/xunsafe v0.11.0 // indirect
+	github.com/viant/xunsafe v0.11.1 // indirect
 	golang.org/x/crypto v0.43.0 // indirect
 	golang.org/x/sys v0.37.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
