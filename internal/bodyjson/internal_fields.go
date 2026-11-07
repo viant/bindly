@@ -25,8 +25,10 @@ type internalPlan struct {
 	arrayLen       int
 	timeLeaf       bool
 	pointerTime    bool
+	timePolicy     *format.Tag
 	internal       bool
 	inputs         bool
+	declaredDates  bool
 	dates          bool
 	dateErr        error
 }
@@ -71,10 +73,12 @@ func compileInternalPlan(target reflect.Type, _ map[reflect.Type]*internalPlan, 
 			changed = false
 			for _, node := range memo {
 				internal, dates, inputs := node.internal, node.dates, node.inputs
+				declaredDates := node.declaredDates
 				dateErr := node.dateErr
 				if node.item != nil {
 					internal, dates = internal || node.item.internal, dates || node.item.dates
 					inputs = inputs || node.item.inputs
+					declaredDates = declaredDates || node.item.declaredDates
 					if dateErr == nil {
 						dateErr = node.item.dateErr
 					}
@@ -85,12 +89,14 @@ func compileInternalPlan(target reflect.Type, _ map[reflect.Type]*internalPlan, 
 					if field.child != nil {
 						internal, dates = internal || field.child.internal, dates || field.child.dates
 						inputs = inputs || field.child.inputs
+						declaredDates = declaredDates || field.child.declaredDates
 						if dateErr == nil {
 							dateErr = field.child.dateErr
 						}
 					}
 				}
-				if internal != node.internal || dates != node.dates || inputs != node.inputs || node.dateErr == nil && dateErr != nil {
+				if internal != node.internal || dates != node.dates || inputs != node.inputs || declaredDates != node.declaredDates || node.dateErr == nil && dateErr != nil {
+					node.declaredDates = declaredDates
 					node.internal, node.dates, node.inputs, node.dateErr, changed = internal, dates, inputs, dateErr, true
 				}
 			}
@@ -183,7 +189,12 @@ func buildInternalPlan(target reflect.Type, memo map[internalPlanKey]*internalPl
 							plan.dateErr = err
 						}
 					}
-					if formatting != nil && formatting.TimeLayout != "" {
+					if formatting.HasTimeInputPolicy() {
+						copy := *item.child
+						copy.timePolicy = formatting
+						copy.declaredDates = true
+						item.child = &copy
+					} else if formatting != nil && formatting.TimeLayout != "" {
 						item.child = nil
 					}
 				}
@@ -270,6 +281,11 @@ func filterPublic(raw []byte, target reflect.Type, normalizeDates bool, represen
 }
 func (p *internalPlan) filter(raw []byte, normalizeDates bool, dates *dateState, path string) ([]byte, error) {
 	if !p.relevant(normalizeDates) {
+		return raw, nil
+	}
+	if normalizeDates && p.timeLeaf && p.timePolicy != nil {
+		// The native standard decoder consumes this original scalar directly.
+		// Text normalization would lose int64 epoch range and duplicate state.
 		return raw, nil
 	}
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {

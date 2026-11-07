@@ -47,7 +47,15 @@ func decode(raw []byte, target reflect.Type, public bool, metadata ...*xshape.Re
 	}
 	value := reflect.New(target)
 	decode := json.Unmarshal
-	if representation != nil || choice.HasEnum(target) {
+	declaredDates := false
+	if public {
+		plan, planErr := compileInternalPlan(target, nil, representation)
+		if planErr != nil {
+			return nil, &input.Error{Cause: planErr}
+		}
+		declaredDates = plan != nil && plan.declaredDates
+	}
+	if representation != nil || choice.HasEnum(target) || declaredDates {
 		decode = func(data []byte, target any) error {
 			return structjson.UnmarshalStandard(data, target, structjson.WithRepresentation(representation))
 		}
