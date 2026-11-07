@@ -439,7 +439,10 @@ func (p *internalPlan) filterObject(raw []byte, normalizeDates bool, dates *date
 					continue
 				}
 				if normalizeDates && field.input.active() {
-					converted, omit := field.input.apply(value)
+					converted, omit, conversionErr := field.input.apply(value)
+					if conversionErr != nil {
+						return nil, fmt.Errorf("field %s: %w", key, conversionErr)
+					}
 					if omit {
 						changed = true
 						continue

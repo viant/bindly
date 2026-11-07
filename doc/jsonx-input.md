@@ -29,3 +29,33 @@ This is input-only metadata. Before adopting it in a schema-exposed consumer,
 verify its generated HTTP/MCP input schema describes the accepted representations,
 its output schema remains unchanged, and the consumer's presence/validation tests
 pass. This Bindly implementation alone does not supply consumer schema metadata.
+
+Additional opt-in conversions share Tagly's `jsonx.Compile` policy:
+
+| Option | Storage | Additional accepted input |
+| --- | --- | --- |
+| `intToBool` | bool | Integer tokens 0 and 1 |
+| `numberToString` | string | Any JSON number, preserving its exact token text |
+| `commaStringToSlice` | []string | Comma-separated strings, trimming each cell and dropping empty cells |
+| `boolIntToYN` | string | Booleans, native signed integers, and Y/N/0/1/empty strings |
+
+`intToBool` rejects other integers and numeric strings. `boolIntToYN` maps zero
+and false to N, nonzero integers and true to Y; it uppercases strings without
+trimming, maps 0/1 to N/Y, and preserves an empty string. Integer conversions
+reject fractions, exponent spellings and overflow. `numberToString` instead
+accepts arbitrary valid numeric lexemes, including large integers and exponents,
+without floating-point conversion. Existing strings remain unchanged.
+
+`commaStringToSlice` preserves existing array cells, including whitespace; it
+has no quoted CSV semantics. Empty/all-empty scalar strings become null, while
+an empty JSON array remains an empty array. Conversion-produced null is supplied
+input and retains presence even when `null=omit` is authored; `null=omit` applies
+only to original null occurrences. Other rules also preserve ordinary null
+semantics unless `null=omit` is explicitly authored.
+
+Conversions run after alias winner selection. Losing aliases are not converted;
+malformed earlier occurrences within the winning representation still fail.
+Only one value conversion may be authored per field. Shared `Policy.InputDomain`
+metadata describes input branches and exact integer bounds; HTTP/MCP owners must
+consume it with native-decoder ownership enabled. These tags do not install
+conversion in standard encoding/json or standalone Structology decoding.

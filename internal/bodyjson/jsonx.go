@@ -1,56 +1,24 @@
 package bodyjson
 
 import (
-	"bytes"
 	"fmt"
 	"reflect"
-	"strings"
+
+	"github.com/viant/tagly/jsonx"
 )
 
 // inputRule augments native decoding only on explicitly authored fields.
-type inputRule struct{ boolToInt, omitNull bool }
+type inputRule struct{ policy *jsonx.Policy }
 
 func compileInputRule(tag reflect.StructTag, typ reflect.Type) (inputRule, error) {
-	var rule inputRule
-	for _, item := range strings.Split(tag.Get("jsonx"), ",") {
-		switch strings.TrimSpace(item) {
-		case "boolToInt":
-			rule.boolToInt = true
-		case "null=omit":
-			rule.omitNull = true
-		}
+	policy, err := jsonx.Compile(tag, typ)
+	if err != nil {
+		return inputRule{}, err
 	}
-	if !rule.boolToInt && !rule.omitNull {
-		return rule, nil
+	if policy.Active() && ownsJSONRepresentation(typ) {
+		return inputRule{}, fmt.Errorf("jsonx input rules cannot override custom JSON ownership on %v", typ)
 	}
-	if ownsJSONRepresentation(typ) {
-		return rule, fmt.Errorf("jsonx input rules cannot override custom JSON ownership on %v", typ)
-	}
-	if !rule.boolToInt {
-		return rule, nil
-	}
-	for typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
-	switch typ.Kind() {
-	case reflect.Int:
-		return rule, nil
-	}
-	return rule, fmt.Errorf("jsonx boolToInt requires an int field, got %v", typ)
+	return inputRule{policy: policy}, nil
 }
-func (r inputRule) active() bool { return r.boolToInt || r.omitNull }
-func (r inputRule) apply(raw []byte) ([]byte, bool) {
-	token := bytes.TrimSpace(raw)
-	if r.omitNull && bytes.Equal(token, []byte("null")) {
-		return nil, true
-	}
-	if r.boolToInt {
-		if bytes.Equal(token, []byte("true")) {
-			return []byte("1"), false
-		}
-		if bytes.Equal(token, []byte("false")) {
-			return []byte("0"), false
-		}
-	}
-	return raw, false
-}
+func (r inputRule) active() bool                           { return r.policy.Active() }
+func (r inputRule) apply(raw []byte) ([]byte, bool, error) { return r.policy.Apply(raw) }
