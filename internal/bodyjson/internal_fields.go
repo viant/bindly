@@ -231,22 +231,25 @@ func buildInternalPlan(target reflect.Type, memo map[internalPlanKey]*internalPl
 	}
 	if target.Kind() == reflect.Struct {
 		names := make([]format.InputName, len(plan.fields))
+		policies := make([]*format.Tag, len(plan.fields))
 		for i, selected := range plan.fields {
 			names[i].Name = selected.field.Name
-			if strings.Contains(strings.ToLower(selected.field.Field.Tag.Get("format")), "inputnames=") {
+			if strings.Contains(strings.ToLower(selected.field.Field.Tag.Get("format")), "inputnames") {
 				policy, err := format.Parse(selected.field.Field.Tag)
 				if err != nil {
 					return nil, err
 				}
 				names[i].Aliases = policy.InputNames
+				policies[i] = policy
 				plan.aliases = plan.aliases || policy.InputNames != ""
 			}
 		}
 		var err error
-		plan.names, err = format.NewInputNameMatcher(names)
+		plan.names, err = format.NewInputNameMatcher(names, policies...)
 		if err != nil {
 			return nil, err
 		}
+		plan.inputs = plan.inputs || plan.names.HasPolicies()
 	}
 	return plan, nil
 }
@@ -383,6 +386,15 @@ func (p *internalPlan) filterArray(raw []byte, normalizeDates bool, dates *dateS
 	return append(result, raw[previous:]...), nil
 }
 func (p *internalPlan) filterObject(raw []byte, normalizeDates bool, dates *dateState, path string) ([]byte, error) {
+	var admitted []bool
+	if normalizeDates && p.names.HasPolicies() {
+		var err error
+		admitted, err = selectInputMembers(raw, p.names)
+		if err != nil {
+			return nil, err
+		}
+	}
+	occurrence := 0
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	if _, err := decoder.Token(); err != nil {
 		return nil, err
@@ -408,6 +420,12 @@ func (p *internalPlan) filterObject(raw []byte, normalizeDates bool, dates *date
 		end := int(decoder.InputOffset())
 		valueStart := end - len(value)
 		previous = end
+		keep := admitted == nil || admitted[occurrence]
+		occurrence++
+		if !keep {
+			changed = true
+			continue
+		}
 		child := p.item
 		childPath := path + "/m" + strconv.Itoa(len(key)) + ":" + key
 		if p.kind == reflect.Map {
