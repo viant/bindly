@@ -66,6 +66,27 @@ func (s *Source) Value(ctx context.Context, target reflect.Type, name string) (a
 
 // ValueWithBodyNullPolicy applies only this binding's whole JSON null policy.
 func (s *Source) ValueWithBodyNullPolicy(ctx context.Context, target reflect.Type, name, policy string) (any, bool, error) {
+	return s.valueWithPolicies(ctx, target, name, policy, "")
+}
+
+// ValueWithBodyInputTag applies an authored whole-body policy per lookup. The
+// shared source and deferred request bytes remain unchanged for strict bindings.
+func (s *Source) ValueWithBodyInputTag(ctx context.Context, target reflect.Type, name string, tag reflect.StructTag) (any, bool, error) {
+	return s.valueWithPolicies(ctx, target, name, "", tag)
+}
+func (s *Source) valueWithPolicies(ctx context.Context, target reflect.Type, name, policy string, tag reflect.StructTag) (any, bool, error) {
+	if tag != "" {
+		if name != "" {
+			return nil, false, &input.Error{Cause: fmt.Errorf("body input tag requires whole body")}
+		}
+		if err := bodyjson.ValidateRootInputTag(tag, target); err != nil {
+			return nil, false, &input.Error{Cause: err}
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+	}
+
 	if policy != "" {
 		if policy != "empty-record" || name != "" || target == nil || target.Kind() != reflect.Pointer || target.Elem().Kind() != reflect.Struct {
 			return nil, false, &input.Error{Cause: fmt.Errorf("invalid whole-body null policy %q for %v/%q", policy, target, name)}
@@ -79,7 +100,7 @@ func (s *Source) ValueWithBodyNullPolicy(ctx context.Context, target reflect.Typ
 		if err != nil {
 			return nil, false, err
 		}
-		return resolved.ValueWithBodyNullPolicy(ctx, target, name, policy)
+		return resolved.valueWithPolicies(ctx, target, name, policy, tag)
 	}
 	if s == nil {
 		return nil, false, nil
@@ -93,6 +114,19 @@ func (s *Source) ValueWithBodyNullPolicy(ctx context.Context, target reflect.Typ
 	}
 	if policy != "" && name != "" {
 		return nil, false, &input.Error{Cause: fmt.Errorf("bodyNullPolicy cannot select an aliased named body field")}
+	}
+	if tag != "" {
+		if name != "" {
+			return nil, false, &input.Error{Cause: fmt.Errorf("body input tag cannot select an aliased member")}
+		}
+		if s.mediaType != "" && s.mediaType != "application/json" && !strings.HasSuffix(s.mediaType, "+json") {
+			return nil, false, &input.Error{Cause: fmt.Errorf("body input tag requires JSON media")}
+		}
+		if decoder, found := s.decoders.Lookup(s.mediaType); found {
+			if _, native := decoder.(jsonDecoder); !native {
+				return nil, false, &input.Error{Cause: fmt.Errorf("body input tag cannot override configured decoder")}
+			}
+		}
 	}
 	if strings.HasPrefix(s.mediaType, "multipart/") {
 		value, found := MultipartValue(s.multipart, target, name)
@@ -115,6 +149,17 @@ func (s *Source) ValueWithBodyNullPolicy(ctx context.Context, target reflect.Typ
 			if !found {
 				return nil, false, nil
 			}
+		}
+
+		if tag != "" {
+			converted, omit, err := bodyjson.ApplyRootInputTag(raw, tag, target)
+			if err != nil {
+				return nil, true, &input.Error{Cause: err}
+			}
+			if omit {
+				return nil, false, nil
+			}
+			raw = converted
 		}
 
 		if strings.TrimSpace(string(raw)) == "null" {

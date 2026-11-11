@@ -72,7 +72,11 @@ func (l *composedLocator) CaptureSource(ctx context.Context, target reflect.Type
 func (l *composedLocator) ValueWithBodyNullPolicy(ctx context.Context, target reflect.Type, name, policy string) (any, bool, error) {
 	return l.value(ctx, nil, target, name, false, policy, false)
 }
-func (l *composedLocator) value(ctx context.Context, scope Scope, target reflect.Type, name string, capture bool, policy string, presenceOnly bool) (any, bool, error) {
+func (l *composedLocator) value(ctx context.Context, scope Scope, target reflect.Type, name string, capture bool, policy string, presenceOnly bool, inputTags ...reflect.StructTag) (any, bool, error) {
+	var inputTag reflect.StructTag
+	if len(inputTags) > 0 {
+		inputTag = inputTags[0]
+	}
 	for _, layer := range l.provider.layers {
 		candidate := layer.Provider.Locate(l.state)
 		if candidate == nil {
@@ -94,6 +98,13 @@ func (l *composedLocator) value(ctx context.Context, scope Scope, target reflect
 			value = found
 		} else if raw != nil {
 			value, found, err = raw.CaptureSource(ctx, target, name)
+
+		} else if inputTag != "" {
+			policyLocator, ok := candidate.(BodyInputTagLocator)
+			if !ok {
+				return nil, false, fmt.Errorf("provider layer %s does not support body input tag", layer.Name)
+			}
+			value, found, err = policyLocator.ValueWithBodyInputTag(ctx, target, name, inputTag)
 		} else if policy != "" {
 			policyLocator, ok := candidate.(BodyNullPolicyLocator)
 			if !ok {
@@ -126,4 +137,8 @@ func (l *composedLocator) Owns(name string) bool {
 func (l *composedLocator) Presence(ctx context.Context, name string) (bool, error) {
 	_, found, err := l.value(ctx, nil, nil, name, false, "", true)
 	return found, err
+}
+
+func (l *composedLocator) ValueWithBodyInputTag(ctx context.Context, target reflect.Type, name string, tag reflect.StructTag) (any, bool, error) {
+	return l.value(ctx, nil, target, name, false, "", false, tag)
 }

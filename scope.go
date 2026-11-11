@@ -9,6 +9,7 @@ import (
 	bodyprovider "github.com/viant/bindly/provider/body"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/viant/bindly/locator"
@@ -131,6 +132,7 @@ type invocation struct {
 }
 
 type resolutionKey struct {
+	bodyInputTag reflect.StructTag
 	presenceOnly bool
 	owner        *Injector
 	location     state.Location
@@ -263,7 +265,7 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 			if binding.rawBodyNullPolicy() {
 				providerPolicy = ""
 			}
-			result, err = s.resolveBindingResult(ctx, &binding.Location, sourceType, binding.Cacheable, providerPolicy, binding.PresenceOnly)
+			result, err = s.resolveBindingResult(ctx, &binding.Location, sourceType, binding.Cacheable, providerPolicy, binding.PresenceOnly, binding.BodyInputTag)
 		}
 		if !preparedValue && err == nil && binding.rawBodyNullPolicy() && result.found && nilValue(result.value) {
 			result.value, err = bodyprovider.NewEmptyRecord(targetType)
@@ -401,7 +403,11 @@ func (s *invocation) resolveWithPolicy(ctx context.Context, location *state.Loca
 func (s *invocation) resolveResult(ctx context.Context, location *state.Location, target reflect.Type, cacheable *bool) (resolution, error) {
 	return s.resolveBindingResult(ctx, location, target, cacheable, "", false)
 }
-func (s *invocation) resolveBindingResult(ctx context.Context, location *state.Location, target reflect.Type, cacheable *bool, bodyNullPolicy string, presenceOnly bool) (resolution, error) {
+func (s *invocation) resolveBindingResult(ctx context.Context, location *state.Location, target reflect.Type, cacheable *bool, bodyNullPolicy string, presenceOnly bool, bodyInputTags ...reflect.StructTag) (resolution, error) {
+	var bodyInputTag reflect.StructTag
+	if len(bodyInputTags) > 0 {
+		bodyInputTag = bodyInputTags[0]
+	}
 	if location == nil {
 		return resolution{}, fmt.Errorf("binding location is required")
 	}
@@ -427,12 +433,15 @@ func (s *invocation) resolveBindingResult(ctx context.Context, location *state.L
 		if bodyNullPolicy != "" {
 			shouldCache = false
 		}
-		cacheKey := resolutionKey{owner: current, location: *location, target: target, presenceOnly: presenceOnly}
+		cacheKey := resolutionKey{owner: current, location: *location, target: target, presenceOnly: presenceOnly, bodyInputTag: bodyInputTag}
 		// Scope identity qualifies persisted entries. Resolve child providers before
 		// considering any cached parent value, so cached defaults cannot mask overrides.
 		persistentKey := fmt.Sprintf("%p:%s:%s:%v:%s", current, location.Kind, location.In, target, s.sourceIdentity)
 		if presenceOnly {
 			persistentKey += ":presenceOnly"
+		}
+		if bodyInputTag != "" {
+			persistentKey += ":bodyInputTag:" + strconv.Quote(string(bodyInputTag))
 		}
 		persistent := s.persistent
 		if s.captureSources {
@@ -482,6 +491,13 @@ func (s *invocation) resolveBindingResult(ctx context.Context, location *state.L
 			value = found
 		} else if raw != nil {
 			value, found, err = raw.CaptureSource(ctx, target, location.In)
+
+		} else if bodyInputTag != "" {
+			policyLocator, ok := valueLocator.(locator.BodyInputTagLocator)
+			if !ok {
+				return resolution{}, fmt.Errorf("provider %s does not support body input tag", location.Kind)
+			}
+			value, found, err = policyLocator.ValueWithBodyInputTag(ctx, target, location.In, bodyInputTag)
 		} else if bodyNullPolicy != "" {
 			policyLocator, ok := valueLocator.(locator.BodyNullPolicyLocator)
 			if !ok {

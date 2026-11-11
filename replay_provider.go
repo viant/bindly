@@ -54,6 +54,12 @@ func (p *replayProvider) Value(ctx context.Context, target reflect.Type, name st
 	return p.ValueWithBodyNullPolicy(ctx, target, name, "")
 }
 func (p *replayProvider) ValueWithBodyNullPolicy(ctx context.Context, target reflect.Type, name, policy string) (any, bool, error) {
+	return p.valueWithPolicies(ctx, target, name, policy, "")
+}
+func (p *replayProvider) ValueWithBodyInputTag(ctx context.Context, target reflect.Type, name string, tag reflect.StructTag) (any, bool, error) {
+	return p.valueWithPolicies(ctx, target, name, "", tag)
+}
+func (p *replayProvider) valueWithPolicies(ctx context.Context, target reflect.Type, name, policy string, tag reflect.StructTag) (any, bool, error) {
 	binding, ok := p.fields[name]
 	if !ok {
 		return nil, false, nil
@@ -65,7 +71,8 @@ func (p *replayProvider) ValueWithBodyNullPolicy(ctx context.Context, target ref
 
 	// A whole-body policy always projects original JSON under the receiving
 	// binding's policy, so an opted parent cannot normalize a strict dependency.
-	if binding.BodyNullPolicy != "" || policy != "" {
+	if binding.BodyNullPolicy != "" || policy != "" || binding.BodyInputTag != "" || tag != "" {
+		binding.BodyInputTag = tag
 		binding.BodyNullPolicy = policy
 		result, err := p.replay.source(ctx, binding, target)
 		return result.value, result.found, err

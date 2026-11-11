@@ -44,3 +44,9 @@ type BodyNullPolicyLocator interface {
 type PresenceLocator interface {
 	Presence(context.Context, string) (bool, error)
 }
+
+// BodyInputTagLocator consumes a whole-body native input policy without
+// mutating the shared source or applying the policy to each element.
+type BodyInputTagLocator interface {
+	ValueWithBodyInputTag(context.Context, reflect.Type, string, reflect.StructTag) (any, bool, error)
+}

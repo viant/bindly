@@ -7,12 +7,15 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/viant/bindly/internal/bodyjson"
 	"github.com/viant/bindly/state"
 	"github.com/viant/bindly/xform"
 	"github.com/viant/tagly/tags"
 )
 
 type BindingSpec struct {
+	// BodyInputTag carries the authored whole-body JSON input policy, not element metadata.
+	BodyInputTag                                                             reflect.StructTag
 	PresenceOnly                                                             bool
 	ResolutionGroup                                                          *ResolutionGroupSpec
 	BodyNullPolicy                                                           string
@@ -228,4 +231,18 @@ func (b BindingSpec) ValidatePresenceOnly(target reflect.Type) error {
 		return fmt.Errorf("presenceOnly does not support source adaptation, conversion, defaults or record policies")
 	}
 	return nil
+}
+
+// ValidateBodyInputTag validates a native whole-body record collection policy.
+func (b BindingSpec) ValidateBodyInputTag(target reflect.Type) error {
+	if b.BodyInputTag == "" {
+		return nil
+	}
+	if b.Location.Kind != "body" || b.Location.In != "" {
+		return fmt.Errorf("body input tag requires the whole body location")
+	}
+	if b.Transformer != nil || b.SourceType != nil && b.SourceType != target || b.BodyNullPolicy != "" || b.PresenceOnly {
+		return fmt.Errorf("body input tag conflicts with source adaptation, null policy or presence-only binding")
+	}
+	return bodyjson.ValidateRootInputTag(b.BodyInputTag, target)
 }

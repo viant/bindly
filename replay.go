@@ -108,6 +108,10 @@ func (r *Replay) source(ctx context.Context, binding BindingSpec, target reflect
 	if binding.rawBodyNullPolicy() {
 		policy = ""
 	}
+	if binding.BodyInputTag != "" {
+		value, found, err := decoder.ValueWithBodyInputTag(ctx, target, "", binding.BodyInputTag)
+		return resolution{value: value, found: found}, err
+	}
 	value, found, err := decoder.ValueWithBodyNullPolicy(ctx, target, "", policy)
 	return resolution{value: value, found: found}, err
 }

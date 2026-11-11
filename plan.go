@@ -7,6 +7,7 @@ import (
 	"github.com/viant/bindly/state"
 	xshape "github.com/viant/x/shape"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/viant/tagly/tags"
@@ -120,6 +121,17 @@ func (i *Injector) CompilePlan(target reflect.Type, specs ...BindingSpec) (*Plan
 				*metadata = cloned
 			}
 		}
+
+		if authored := resolved.Tag.Get("jsonx"); spec.Location.Kind == "body" && spec.Location.In == "" && hasObjectToSlicePolicy(authored) {
+			tag := reflect.StructTag("jsonx:" + strconv.Quote(authored))
+			if spec.BodyInputTag != "" && spec.BodyInputTag.Get("jsonx") != authored {
+				return nil, fmt.Errorf("binding %s has conflicting body input metadata", spec.Path)
+			}
+			spec.BodyInputTag = tag
+		}
+		if err := spec.ValidateBodyInputTag(resolved.Type); err != nil {
+			return nil, fmt.Errorf("binding %s: %w", spec.Path, err)
+		}
 		if err := spec.ValidatePresenceOnly(resolved.Type); err != nil {
 			return nil, fmt.Errorf("binding %s: %w", spec.Path, err)
 		}
@@ -218,4 +230,15 @@ func (p *Plan) ExplicitPresence(target any, path string) (present, hasMarker boo
 		return false, true, nil
 	}
 	return value.Bool(), true, nil
+}
+
+// Only the approved whole-body conversion opts into root policy ownership.
+// Other jsonx metadata keeps its existing owner and must not gain new restrictions.
+func hasObjectToSlicePolicy(authored string) bool {
+	for _, option := range strings.Split(authored, ",") {
+		if strings.TrimSpace(option) == "objectToSlice" {
+			return true
+		}
+	}
+	return false
 }
