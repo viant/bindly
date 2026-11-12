@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -54,6 +55,13 @@ func TestReplayCaptureSourcesRawBodyPresence(t *testing.T) {
 				encoded, err := json.Marshal(replay)
 				require.NoError(t, err)
 				require.JSONEq(t, `{"CanonicalBody":`+raw+`}`, string(encoded))
+				scope, err := injector.ForScope(provider)
+				require.NoError(t, err)
+				inScope, err := selected.CaptureSourcesIn(t.Context(), scope)
+				require.NoError(t, err)
+				scopedJSON, err := json.Marshal(inScope)
+				require.NoError(t, err)
+				require.JSONEq(t, string(encoded), string(scopedJSON))
 				actual := &input{}
 				require.NoError(t, injector.Bind(context.Background(), actual, WithPlan(plan), WithReplay(ReplayBinding{Replay: replay, Only: true})))
 				if raw != "null" {
@@ -212,4 +220,81 @@ func TestReplayCaptureSourcesErrorsReturnNoPartialReplay(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestReplayCaptureSourcesInKeepsScopeAndReadsFreshValues(t *testing.T) {
+	type input struct{ Role int }
+	root, err := NewInjector()
+	require.NoError(t, err)
+	plan, err := root.CompilePlan(reflect.TypeFor[input](), BindingSpec{Path: "Role", Location: state.Location{Kind: "header", In: "role"}})
+	require.NoError(t, err)
+	selected, err := plan.Replay("Role")
+	require.NoError(t, err)
+	provider := &countingProvider{kind: "header", cacheable: true}
+	scope, err := root.ForScope(provider)
+	require.NoError(t, err)
+	for _, role := range []int{1, 2} {
+		captured, err := selected.CaptureSourcesIn(t.Context(), scope)
+		require.NoError(t, err)
+		raw, err := captured.MarshalJSON()
+		require.NoError(t, err)
+		require.JSONEq(t, fmt.Sprintf(`{"Role":%d}`, role), string(raw))
+	}
+	other, err := root.ForScope(values.New("header", map[string]any{"role": 99}))
+	require.NoError(t, err)
+	captured, err := selected.CaptureSourcesIn(t.Context(), other)
+	require.NoError(t, err)
+	raw, err := captured.MarshalJSON()
+	require.NoError(t, err)
+	require.JSONEq(t, `{"Role":99}`, string(raw))
+	captured, err = selected.CaptureSourcesIn(t.Context(), scope)
+	require.NoError(t, err)
+	raw, err = captured.MarshalJSON()
+	require.NoError(t, err)
+	require.JSONEq(t, `{"Role":3}`, string(raw))
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = selected.CaptureSourcesIn(canceled, scope)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestReplayNativeSourceEqualityPreservesValuesJSONNormalizes(t *testing.T) {
+	type input struct{ Source any }
+	root, err := NewInjector()
+	require.NoError(t, err)
+	plan, err := root.CompilePlan(reflect.TypeFor[input](), BindingSpec{Path: "Source", Location: state.Location{Kind: "header", In: "source"}})
+	require.NoError(t, err)
+	selected, err := plan.Replay("Source")
+	require.NoError(t, err)
+	capture := func(value any) *Replay {
+		scope, err := root.ForScope(values.New("header", map[string]any{"source": value}))
+		require.NoError(t, err)
+		snapshot, err := selected.CaptureSourcesIn(t.Context(), scope)
+		require.NoError(t, err)
+		return snapshot
+	}
+	type privateScalar struct {
+		Public  string
+		private string
+	}
+	for _, pair := range [][2]any{{string([]byte{'x', 0xff}), string([]byte{'x', 0xfe})}, {privateScalar{"same", "first"}, privateScalar{"same", "second"}}} {
+		first, second := capture(pair[0]), capture(pair[1])
+		a, err := first.MarshalJSON()
+		require.NoError(t, err)
+		b, err := second.MarshalJSON()
+		require.NoError(t, err)
+		require.JSONEq(t, string(a), string(b), "the serialized representations collide")
+		require.True(t, first.SourcesPresent())
+		require.True(t, second.SourcesPresent())
+		require.False(t, first.SourcesEqual(second))
+		require.True(t, first.SourcesEqual(capture(pair[0])))
+		decoded, err := selected.DecodeJSON(a)
+		require.NoError(t, err)
+		require.False(t, decoded.SourcesPresent())
+		require.False(t, first.SourcesEqual(decoded))
+	}
+	type privateMutable struct{ private []int }
+	opaque := capture(privateMutable{[]int{1}})
+	require.False(t, opaque.SourcesPresent())
+	require.False(t, opaque.SourcesEqual(opaque), "opaque data cannot establish source identity")
 }

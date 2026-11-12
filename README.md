@@ -268,6 +268,16 @@ receives binding events, including metadata supplied by metadata-aware locators.
 values, `DecodeJSON` accepts replay JSON, and `CaptureSources` snapshots selected
 provider sources before transformation, defaults or dependencies run. Providers
 implementing `locator.SourceCapturer` can retain raw JSON presence and numbers.
+`CaptureSourcesIn(ctx, injector)` performs the same capture in an already
+composed invocation injector. Reuse it for multiple snapshots of that scope;
+each capture reads fresh source values and bypasses persistent value caches.
+The caller owns the injector and its provider lifetime. Neither capture API
+initializes a target, applies transformers, or evaluates dependencies.
+`SourcesPresent` and `SourcesEqual` compare detached native source evidence from
+the same prepared replay plan, including information that JSON encoding omits
+or normalizes. Decoded JSON and opaque mutable values cannot establish this
+evidence. It is not prepared binding authority and does not change serialized
+replay data.
 `ReplayPlan.Prepare` declares fresh prerequisite bindings; `WithReplay` applies
 the replay through the normal binding and authorization path. See
 [replay tests](replay_test.go) and [source capture tests](replay_capture_test.go)

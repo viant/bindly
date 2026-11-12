@@ -23,9 +23,11 @@ type ReplayPlan struct {
 // Replay holds one detached set of source values. Prepared values can only be
 // produced by successful native binding. It is invocation-owned, not shareable.
 type Replay struct {
-	plan     *ReplayPlan
-	raw      map[string]json.RawMessage
-	prepared map[string]replayValue
+	plan           *ReplayPlan
+	raw            map[string]json.RawMessage
+	prepared       map[string]replayValue
+	sourceValues   map[string]any
+	sourceEvidence bool
 }
 type replayValue struct {
 	value any
@@ -89,6 +91,19 @@ func (p *ReplayPlan) DecodeJSON(data []byte) (*Replay, error) {
 		}
 	}
 	return result, nil
+}
+
+// SourcesPresent reports detached native evidence for every selected source.
+// Decoded JSON is not native source evidence, and opaque mutable values cannot
+// establish equality. This evidence never supplies prepared binding authority.
+func (r *Replay) SourcesPresent() bool {
+	return r != nil && r.plan != nil && r.sourceEvidence && len(r.sourceValues) == len(r.plan.order)
+}
+
+// SourcesEqual compares detached values and presence from the same prepared
+// source plan, preserving information that JSON encoding may omit or normalize.
+func (r *Replay) SourcesEqual(other *Replay) bool {
+	return r != nil && other != nil && r.sourceEvidence && other.sourceEvidence && r.plan == other.plan && reflect.DeepEqual(r.sourceValues, other.sourceValues)
 }
 func (r *Replay) MarshalJSON() ([]byte, error) { return json.Marshal(r.raw) }
 func (r *Replay) Plan() *Plan                  { return r.plan.plan }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/viant/bindly/locator"
+	xshape "github.com/viant/x/shape"
 )
 
 // CaptureSources snapshots only this plan's selected source bindings. Providers
@@ -28,8 +29,21 @@ func (p *ReplayPlan) CaptureSources(ctx context.Context, providers []locator.Pro
 	if err != nil {
 		return nil, err
 	}
+	return p.CaptureSourcesIn(ctx, injector)
+}
+
+// CaptureSourcesIn snapshots raw sources using an already composed invocation
+// injector. It uses no persistent value cache and never binds a target, applies
+// a transformer, or evaluates a prerequisite. The caller owns scope lifetime.
+func (p *ReplayPlan) CaptureSourcesIn(ctx context.Context, injector *Injector) (*Replay, error) {
+	if p == nil || p.plan == nil || ctx == nil || injector == nil || injector.locators == nil {
+		return nil, fmt.Errorf("replay source capture requires a plan, context and injector")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	scope := &invocation{injector: injector, active: map[string]bool{}, cache: map[resolutionKey]resolution{}, captureSources: true}
-	result := &Replay{plan: p, raw: map[string]json.RawMessage{}}
+	result := &Replay{plan: p, raw: map[string]json.RawMessage{}, sourceValues: map[string]any{}, sourceEvidence: true}
 	for _, path := range p.order {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -53,6 +67,11 @@ func (p *ReplayPlan) CaptureSources(ctx context.Context, providers []locator.Pro
 			if err = value.convert(target); err != nil {
 				return nil, &BindingError{Path: path, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
 			}
+		}
+		if detached, cloneErr := (xshape.Runtime{}).CloneValue(value.value); cloneErr == nil {
+			result.sourceValues[binding.Name] = detached
+		} else {
+			result.sourceEvidence = false
 		}
 		encoded, err := json.Marshal(value.value)
 		if err != nil {
