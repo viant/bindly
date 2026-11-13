@@ -14,16 +14,23 @@ import (
 // DecodePublic filters canonical internal members and normalizes default dates
 // before the existing typed JSON decoder and presence reconstruction.
 func DecodePublic(raw []byte, target reflect.Type, metadata ...*xshape.Representation) (any, error) {
-	return decode(raw, target, true, metadata...)
+	return DecodePublicWithUnknownFieldPolicy(raw, target, structjson.IgnoreUnknown, metadata...)
+}
+
+// DecodePublicWithUnknownFieldPolicy keeps public filtering, declared input
+// transforms and presence together while delegating admission to the existing
+// standard decoder policy.
+func DecodePublicWithUnknownFieldPolicy(raw []byte, target reflect.Type, policy structjson.UnknownFieldPolicy, metadata ...*xshape.Representation) (any, error) {
+	return decode(raw, target, true, policy, metadata...)
 }
 
 // VerifyTypedRoundtrip reconstructs only Replay.encodeField's immediately preceding
 // local marshal. Stored raw replay continues through the public body Source.
 func VerifyTypedRoundtrip(raw []byte, target reflect.Type) (any, error) {
-	return decode(raw, target, false)
+	return decode(raw, target, false, structjson.IgnoreUnknown)
 }
 
-func decode(raw []byte, target reflect.Type, public bool, metadata ...*xshape.Representation) (any, error) {
+func decode(raw []byte, target reflect.Type, public bool, policy structjson.UnknownFieldPolicy, metadata ...*xshape.Representation) (any, error) {
 	representation := metadataForType(firstMetadata(metadata), target)
 	if strings.TrimSpace(string(raw)) == "null" {
 		return nil, nil
@@ -57,9 +64,9 @@ func decode(raw []byte, target reflect.Type, public bool, metadata ...*xshape.Re
 		declaredDates = plan != nil && plan.declaredDates
 		aliases = plan != nil && plan.aliases
 	}
-	if representation != nil || choice.HasEnum(target) || declaredDates || aliases {
+	if policy == structjson.ErrorOnUnknown || representation != nil || choice.HasEnum(target) || declaredDates || aliases {
 		decode = func(data []byte, target any) error {
-			return structjson.UnmarshalStandard(data, target, structjson.WithRepresentation(representation))
+			return structjson.UnmarshalStandard(data, target, structjson.WithRepresentation(representation), structjson.WithUnknownFieldPolicy(policy))
 		}
 	}
 	if err := decode(raw, value.Interface()); err != nil {

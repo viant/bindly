@@ -59,3 +59,31 @@ Only one value conversion may be authored per field. Shared `Policy.InputDomain`
 metadata describes input branches and exact integer bounds; HTTP/MCP owners must
 consume it with native-decoder ownership enabled. These tags do not install
 conversion in standard encoding/json or standalone Structology decoding.
+
+## Native unknown-field admission
+
+Use `body.WithUnknownFieldPolicy(structjson.ErrorOnUnknown)` to reject undeclared
+members through the native body decoder. This retains declared `jsonx` input
+conversion, aliases, internal-field filtering, default dates and presence
+reconstruction in their existing order. Untagged fields keep ordinary JSON
+types. The default remains `structjson.IgnoreUnknown`.
+
+The policy applies to JSON media types and cannot be combined with a configured
+decoder for that media type: a configured decoder owns its own input contract.
+Unsupported combinations fail when the source is constructed. Custom
+`UnmarshalJSON` and `UnmarshalText` values continue owning their full subtrees.
+
+## Per-binding body representation
+
+`BindingSpec.BodyRepresentation` supplies immutable metadata over the binding's
+linked body source type. Native body sources retain their own unknown-field
+policy, configured decoder, aliases, bytes and presence handling. Independently
+represented named bindings can therefore share one request source without
+rebuilding a source or decoding its JSON twice.
+
+Plan compilation rejects incompatible source types, non-body bindings and
+presence-only bindings with representation metadata. A source that cannot honor
+the native representation capability returns an error. Known-hidden and canonical
+internal fields retain their existing filtering behavior; arbitrary unknown
+members still follow the original source's unknown-field policy. Existing caches
+distinguish canonical, represented and revised-metadata results.

@@ -6,6 +6,7 @@ import (
 	"reflect"
 
 	"github.com/viant/structology"
+	"github.com/viant/x/shape"
 )
 
 type ProviderLayer struct {
@@ -73,6 +74,9 @@ func (l *composedLocator) ValueWithBodyNullPolicy(ctx context.Context, target re
 	return l.value(ctx, nil, target, name, false, policy, false)
 }
 func (l *composedLocator) value(ctx context.Context, scope Scope, target reflect.Type, name string, capture bool, policy string, presenceOnly bool, inputTags ...reflect.StructTag) (any, bool, error) {
+	return l.valueWithRepresentation(ctx, scope, target, name, capture, policy, presenceOnly, nil, inputTags...)
+}
+func (l *composedLocator) valueWithRepresentation(ctx context.Context, scope Scope, target reflect.Type, name string, capture bool, policy string, presenceOnly bool, metadata *shape.Representation, inputTags ...reflect.StructTag) (any, bool, error) {
 	var inputTag reflect.StructTag
 	if len(inputTags) > 0 {
 		inputTag = inputTags[0]
@@ -99,6 +103,12 @@ func (l *composedLocator) value(ctx context.Context, scope Scope, target reflect
 		} else if raw != nil {
 			value, found, err = raw.CaptureSource(ctx, target, name)
 
+		} else if metadata != nil {
+			native, ok := candidate.(BodyRepresentationLocator)
+			if !ok {
+				return nil, false, fmt.Errorf("provider layer %s does not support body representation", layer.Name)
+			}
+			value, found, err = native.ValueWithBodyRepresentation(ctx, target, name, metadata, policy, inputTag)
 		} else if inputTag != "" {
 			policyLocator, ok := candidate.(BodyInputTagLocator)
 			if !ok {
@@ -141,4 +151,8 @@ func (l *composedLocator) Presence(ctx context.Context, name string) (bool, erro
 
 func (l *composedLocator) ValueWithBodyInputTag(ctx context.Context, target reflect.Type, name string, tag reflect.StructTag) (any, bool, error) {
 	return l.value(ctx, nil, target, name, false, "", false, tag)
+}
+
+func (l *composedLocator) ValueWithBodyRepresentation(ctx context.Context, target reflect.Type, name string, metadata *shape.Representation, policy string, tag reflect.StructTag) (any, bool, error) {
+	return l.valueWithRepresentation(ctx, nil, target, name, false, policy, false, metadata, tag)
 }

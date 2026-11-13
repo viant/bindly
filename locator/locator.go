@@ -2,6 +2,7 @@ package locator
 
 import (
 	"context"
+	"github.com/viant/x/shape"
 	"reflect"
 )
 
@@ -49,4 +50,10 @@ type PresenceLocator interface {
 // mutating the shared source or applying the policy to each element.
 type BodyInputTagLocator interface {
 	ValueWithBodyInputTag(context.Context, reflect.Type, string, reflect.StructTag) (any, bool, error)
+}
+
+// BodyRepresentationLocator overlays immutable metadata for one body lookup.
+// The source retains decoder ownership, admission policy, selection and bytes.
+type BodyRepresentationLocator interface {
+	ValueWithBodyRepresentation(context.Context, reflect.Type, string, *shape.Representation, string, reflect.StructTag) (any, bool, error)
 }

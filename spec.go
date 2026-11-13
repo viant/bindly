@@ -11,9 +11,14 @@ import (
 	"github.com/viant/bindly/state"
 	"github.com/viant/bindly/xform"
 	"github.com/viant/tagly/tags"
+	xshape "github.com/viant/x/shape"
 )
 
 type BindingSpec struct {
+	// BodyRepresentation is immutable native body metadata. It changes admission
+	// and presence over the linked source type without replacing its decoder.
+	BodyRepresentation    *xshape.Representation
+	bodyRepresentationKey string
 	// BodyInputTag carries the authored whole-body JSON input policy, not element metadata.
 	BodyInputTag                                                             reflect.StructTag
 	PresenceOnly                                                             bool

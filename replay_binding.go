@@ -42,7 +42,7 @@ func (r *Replay) capturePrepared(ctx context.Context, input any, assigned map[st
 			return err
 		}
 		prepared[path] = replayValue{value: detached, found: true}
-		if binding.Transformer == nil {
+		if binding.Transformer == nil && binding.BodyRepresentation == nil {
 			original, err := r.source(ctx, binding, r.plan.plan.fields[path].Type)
 			if err != nil {
 				return err
@@ -63,7 +63,7 @@ func (r *Replay) capturePrepared(ctx context.Context, input any, assigned map[st
 func (r *Replay) authorize(ctx context.Context, input any, gate func(context.Context, any) error) error {
 	before := map[string]replayValue{}
 	for path, binding := range r.plan.preflight {
-		if binding.Transformer == nil && !r.plan.protected[path] {
+		if binding.Transformer == nil && binding.BodyRepresentation == nil && !r.plan.protected[path] {
 			continue
 		}
 		value, ok := r.plan.plan.fields[path].Value(reflect.ValueOf(input))

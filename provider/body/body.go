@@ -15,6 +15,7 @@ import (
 	"github.com/viant/bindly/locator"
 	"github.com/viant/bindly/xform/conv"
 	"github.com/viant/structology"
+	structjson "github.com/viant/structology/encoding/json"
 	xshape "github.com/viant/x/shape"
 )
 
@@ -26,6 +27,7 @@ type Source struct {
 	exact          bool
 	aliases        map[string]string
 	decoders       *DecoderRegistry
+	unknownFields  structjson.UnknownFieldPolicy
 	multipart      *multipart.Form
 }
 type Option func(*Source)
@@ -54,6 +56,17 @@ func New(raw []byte, contentType string, aliases map[string]string, options ...O
 			option(s)
 		}
 	}
+	if s.unknownFields != structjson.IgnoreUnknown && s.unknownFields != structjson.ErrorOnUnknown {
+		return nil, &input.Error{Cause: fmt.Errorf("unsupported body unknown-field policy %d", s.unknownFields)}
+	}
+	if s.unknownFields == structjson.ErrorOnUnknown {
+		if mediaType != "" && mediaType != "application/json" && !strings.HasSuffix(mediaType, "+json") {
+			return nil, &input.Error{Cause: fmt.Errorf("body unknown-field policy requires JSON media")}
+		}
+		if _, configured := s.decoders.Lookup(mediaType); configured {
+			return nil, &input.Error{Cause: fmt.Errorf("body unknown-field policy requires the native JSON decoder")}
+		}
+	}
 	return s, nil
 }
 func (s *Source) Kind() string                              { return "body" }
@@ -66,15 +79,41 @@ func (s *Source) Value(ctx context.Context, target reflect.Type, name string) (a
 
 // ValueWithBodyNullPolicy applies only this binding's whole JSON null policy.
 func (s *Source) ValueWithBodyNullPolicy(ctx context.Context, target reflect.Type, name, policy string) (any, bool, error) {
-	return s.valueWithPolicies(ctx, target, name, policy, "")
+	return s.valueWithPolicies(ctx, target, name, policy, "", false)
 }
 
 // ValueWithBodyInputTag applies an authored whole-body policy per lookup. The
 // shared source and deferred request bytes remain unchanged for strict bindings.
 func (s *Source) ValueWithBodyInputTag(ctx context.Context, target reflect.Type, name string, tag reflect.StructTag) (any, bool, error) {
-	return s.valueWithPolicies(ctx, target, name, "", tag)
+	return s.valueWithPolicies(ctx, target, name, "", tag, false)
 }
-func (s *Source) valueWithPolicies(ctx context.Context, target reflect.Type, name, policy string, tag reflect.StructTag) (any, bool, error) {
+
+// ValueWithBodyRepresentation keeps the existing source and decoder policies,
+// applying this binding's immutable metadata to a detached source view. Configured
+// decoders must accept representation metadata; unsupported media fail explicitly.
+func (s *Source) ValueWithBodyRepresentation(ctx context.Context, target reflect.Type, name string, metadata *xshape.Representation, policy string, tag reflect.StructTag) (any, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if s != nil && s.deferred != nil {
+		resolved, err := s.resolve(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		return resolved.ValueWithBodyRepresentation(ctx, target, name, metadata, policy, tag)
+	}
+	if s == nil {
+		return nil, false, nil
+	}
+	if metadata == nil || !metadata.Changed() {
+		return s.valueWithPolicies(ctx, target, name, policy, tag, false)
+	}
+	copy := *s
+	copy.representation = metadata
+	return copy.valueWithPolicies(ctx, target, name, policy, tag, true)
+}
+
+func (s *Source) valueWithPolicies(ctx context.Context, target reflect.Type, name, policy string, tag reflect.StructTag, bindingRepresentation bool) (any, bool, error) {
 	if tag != "" {
 		if name != "" {
 			return nil, false, &input.Error{Cause: fmt.Errorf("body input tag requires whole body")}
@@ -100,7 +139,7 @@ func (s *Source) valueWithPolicies(ctx context.Context, target reflect.Type, nam
 		if err != nil {
 			return nil, false, err
 		}
-		return resolved.valueWithPolicies(ctx, target, name, policy, tag)
+		return resolved.valueWithPolicies(ctx, target, name, policy, tag, bindingRepresentation)
 	}
 	if s == nil {
 		return nil, false, nil
@@ -115,14 +154,32 @@ func (s *Source) valueWithPolicies(ctx context.Context, target reflect.Type, nam
 	if policy != "" && name != "" {
 		return nil, false, &input.Error{Cause: fmt.Errorf("bodyNullPolicy cannot select an aliased named body field")}
 	}
+	// A registry may change after New. Admission and dispatch must use the same
+	// resolved decoder so late registration cannot override native source policy.
+	decoder, configured := s.decoders.Lookup(s.mediaType)
+	if s.unknownFields == structjson.ErrorOnUnknown && configured {
+		return nil, false, &input.Error{Cause: fmt.Errorf("body unknown-field policy requires the native JSON decoder")}
+	}
+	metadataDecoder, supportsRepresentation := decoder.(interface {
+		UnmarshalWithRepresentation([]byte, any, *xshape.Representation) error
+	})
+	jsonMedia := s.mediaType == "" || s.mediaType == "application/json" || strings.HasSuffix(s.mediaType, "+json")
+	if bindingRepresentation {
+		if strings.HasPrefix(s.mediaType, "multipart/") || (!jsonMedia && (!configured || name != "")) {
+			return nil, false, &input.Error{Cause: fmt.Errorf("body decoder for %q does not support representation metadata for this binding", s.mediaType)}
+		}
+		if configured && !supportsRepresentation {
+			return nil, false, &input.Error{Cause: fmt.Errorf("configured body decoder does not accept representation metadata")}
+		}
+	}
 	if tag != "" {
 		if name != "" {
 			return nil, false, &input.Error{Cause: fmt.Errorf("body input tag cannot select an aliased member")}
 		}
-		if s.mediaType != "" && s.mediaType != "application/json" && !strings.HasSuffix(s.mediaType, "+json") {
+		if !jsonMedia {
 			return nil, false, &input.Error{Cause: fmt.Errorf("body input tag requires JSON media")}
 		}
-		if decoder, found := s.decoders.Lookup(s.mediaType); found {
+		if configured {
 			if _, native := decoder.(jsonDecoder); !native {
 				return nil, false, &input.Error{Cause: fmt.Errorf("body input tag cannot override configured decoder")}
 			}
@@ -138,7 +195,7 @@ func (s *Source) valueWithPolicies(ctx context.Context, target reflect.Type, nam
 	if len(raw) == 0 {
 		return nil, false, nil
 	}
-	if s.mediaType == "application/json" || strings.HasSuffix(s.mediaType, "+json") || s.mediaType == "" {
+	if jsonMedia {
 		if name != "" {
 			var found bool
 			var err error
@@ -160,6 +217,11 @@ func (s *Source) valueWithPolicies(ctx context.Context, target reflect.Type, nam
 				return nil, false, nil
 			}
 			raw = converted
+		}
+		if bindingRepresentation {
+			if err := ValidateRequired(raw, target, s.representation); err != nil {
+				return nil, true, err
+			}
 		}
 
 		if strings.TrimSpace(string(raw)) == "null" {
@@ -184,29 +246,25 @@ func (s *Source) valueWithPolicies(ctx context.Context, target reflect.Type, nam
 		if target == reflect.TypeOf(json.RawMessage{}) {
 			return append(json.RawMessage(nil), raw...), true, nil
 		}
-		if _, found := s.decoders.Lookup(s.mediaType); !found {
-			value, err := bodyjson.DecodePublic(raw, target, s.representation)
+		if !configured {
+			value, err := bodyjson.DecodePublicWithUnknownFieldPolicy(raw, target, s.unknownFields, s.representation)
 			return value, true, err
 		}
-		filtered, err := bodyjson.FilterPublic(raw, target, s.representation)
-		if err != nil {
-			return nil, true, &input.Error{Cause: err}
+		if !bindingRepresentation {
+			filtered, err := bodyjson.FilterPublic(raw, target, s.representation)
+			if err != nil {
+				return nil, true, &input.Error{Cause: err}
+			}
+			raw = filtered
 		}
-		raw = filtered
 		value := reflect.New(target)
-		decode := json.Unmarshal
-		if decoder, found := s.decoders.Lookup(s.mediaType); found {
-			decode = decoder.Decode
-			if s.representation != nil {
-				metadataDecoder, ok := decoder.(interface {
-					UnmarshalWithRepresentation([]byte, any, *xshape.Representation) error
-				})
-				if !ok {
-					return nil, true, &input.Error{Cause: fmt.Errorf("configured body decoder does not accept representation metadata")}
-				}
-				decode = func(raw []byte, destination any) error {
-					return metadataDecoder.UnmarshalWithRepresentation(raw, destination, s.representation)
-				}
+		decode := decoder.Decode
+		if s.representation != nil {
+			if !supportsRepresentation {
+				return nil, true, &input.Error{Cause: fmt.Errorf("configured body decoder does not accept representation metadata")}
+			}
+			decode = func(raw []byte, destination any) error {
+				return metadataDecoder.UnmarshalWithRepresentation(raw, destination, s.representation)
 			}
 		}
 		if err := decode(raw, value.Interface()); err != nil {
@@ -217,13 +275,19 @@ func (s *Source) valueWithPolicies(ctx context.Context, target reflect.Type, nam
 		}
 		return value.Elem().Interface(), true, nil
 	}
-	if decoder, found := s.decoders.Lookup(s.mediaType); found {
+	if configured {
 		if target == nil {
 			return nil, false, &input.Error{Cause: fmt.Errorf("body binding source type is required")}
 		}
 		value := reflect.New(target)
 		if name == "" {
-			if err := decoder.Decode(raw, value.Interface()); err != nil {
+			decode := decoder.Decode
+			if bindingRepresentation {
+				decode = func(raw []byte, destination any) error {
+					return metadataDecoder.UnmarshalWithRepresentation(raw, destination, s.representation)
+				}
+			}
+			if err := decode(raw, value.Interface()); err != nil {
 				return nil, false, &input.Error{Cause: err}
 			}
 			return value.Elem().Interface(), true, nil

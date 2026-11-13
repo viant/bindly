@@ -56,7 +56,7 @@ func (p *ReplayPlan) CaptureSourcesIn(ctx context.Context, injector *Injector) (
 			}
 			target = p.plan.fields[path].Type
 		}
-		value, err := scope.resolveBindingResult(ctx, &binding.Location, target, binding.Cacheable, "", binding.PresenceOnly)
+		value, err := scope.resolveBindingResult(ctx, &binding.Location, target, binding.Cacheable, "", binding.PresenceOnly, binding.BodyRepresentation, binding.bodyRepresentationKey)
 		if err != nil {
 			return nil, &BindingError{Path: path, Code: binding.ErrorCode, Message: binding.ErrorMessage, Cause: err}
 		}

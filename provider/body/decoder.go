@@ -51,6 +51,14 @@ func (r *DecoderRegistry) Lookup(mediaType string) (Decoder, bool) {
 }
 func WithDecoders(decoders *DecoderRegistry) Option { return func(s *Source) { s.decoders = decoders } }
 
+// WithUnknownFieldPolicy configures native JSON body admission without replacing
+// its declared input transforms, field selection, dates or presence tracking.
+// ErrorOnUnknown cannot be combined with a configured decoder for the media type;
+// that decoder owns its own input contract.
+func WithUnknownFieldPolicy(policy structjson.UnknownFieldPolicy) Option {
+	return func(s *Source) { s.unknownFields = policy }
+}
+
 type jsonDecoder struct{}
 
 func (jsonDecoder) Decode(raw []byte, target any) error {

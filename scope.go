@@ -132,11 +132,12 @@ type invocation struct {
 }
 
 type resolutionKey struct {
-	bodyInputTag reflect.StructTag
-	presenceOnly bool
-	owner        *Injector
-	location     state.Location
-	target       reflect.Type
+	bodyRepresentation *xshape.Representation
+	bodyInputTag       reflect.StructTag
+	presenceOnly       bool
+	owner              *Injector
+	location           state.Location
+	target             reflect.Type
 }
 type resolution struct {
 	value    any
@@ -265,7 +266,7 @@ func (s *invocation) bind(ctx context.Context, target any, plan *Plan) error {
 			if binding.rawBodyNullPolicy() {
 				providerPolicy = ""
 			}
-			result, err = s.resolveBindingResult(ctx, &binding.Location, sourceType, binding.Cacheable, providerPolicy, binding.PresenceOnly, binding.BodyInputTag)
+			result, err = s.resolveBindingResult(ctx, &binding.Location, sourceType, binding.Cacheable, providerPolicy, binding.PresenceOnly, binding.BodyRepresentation, binding.bodyRepresentationKey, binding.BodyInputTag)
 		}
 		if !preparedValue && err == nil && binding.rawBodyNullPolicy() && result.found && nilValue(result.value) {
 			result.value, err = bodyprovider.NewEmptyRecord(targetType)
@@ -401,9 +402,9 @@ func (s *invocation) resolveWithPolicy(ctx context.Context, location *state.Loca
 }
 
 func (s *invocation) resolveResult(ctx context.Context, location *state.Location, target reflect.Type, cacheable *bool) (resolution, error) {
-	return s.resolveBindingResult(ctx, location, target, cacheable, "", false)
+	return s.resolveBindingResult(ctx, location, target, cacheable, "", false, nil, "")
 }
-func (s *invocation) resolveBindingResult(ctx context.Context, location *state.Location, target reflect.Type, cacheable *bool, bodyNullPolicy string, presenceOnly bool, bodyInputTags ...reflect.StructTag) (resolution, error) {
+func (s *invocation) resolveBindingResult(ctx context.Context, location *state.Location, target reflect.Type, cacheable *bool, bodyNullPolicy string, presenceOnly bool, representation *xshape.Representation, representationKey string, bodyInputTags ...reflect.StructTag) (resolution, error) {
 	var bodyInputTag reflect.StructTag
 	if len(bodyInputTags) > 0 {
 		bodyInputTag = bodyInputTags[0]
@@ -433,7 +434,7 @@ func (s *invocation) resolveBindingResult(ctx context.Context, location *state.L
 		if bodyNullPolicy != "" {
 			shouldCache = false
 		}
-		cacheKey := resolutionKey{owner: current, location: *location, target: target, presenceOnly: presenceOnly, bodyInputTag: bodyInputTag}
+		cacheKey := resolutionKey{owner: current, location: *location, target: target, presenceOnly: presenceOnly, bodyInputTag: bodyInputTag, bodyRepresentation: representation}
 		// Scope identity qualifies persisted entries. Resolve child providers before
 		// considering any cached parent value, so cached defaults cannot mask overrides.
 		persistentKey := fmt.Sprintf("%p:%s:%s:%v:%s", current, location.Kind, location.In, target, s.sourceIdentity)
@@ -442,6 +443,9 @@ func (s *invocation) resolveBindingResult(ctx context.Context, location *state.L
 		}
 		if bodyInputTag != "" {
 			persistentKey += ":bodyInputTag:" + strconv.Quote(string(bodyInputTag))
+		}
+		if representation != nil {
+			persistentKey += ":bodyRepresentation:" + representationKey
 		}
 		persistent := s.persistent
 		if s.captureSources {
@@ -492,6 +496,12 @@ func (s *invocation) resolveBindingResult(ctx context.Context, location *state.L
 		} else if raw != nil {
 			value, found, err = raw.CaptureSource(ctx, target, location.In)
 
+		} else if representation != nil {
+			native, ok := valueLocator.(locator.BodyRepresentationLocator)
+			if !ok {
+				return resolution{}, fmt.Errorf("provider %s does not support body representation", location.Kind)
+			}
+			value, found, err = native.ValueWithBodyRepresentation(ctx, target, location.In, representation, bodyNullPolicy, bodyInputTag)
 		} else if bodyInputTag != "" {
 			policyLocator, ok := valueLocator.(locator.BodyInputTagLocator)
 			if !ok {

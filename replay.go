@@ -61,7 +61,7 @@ func (p *ReplayPlan) Capture(input any) (*Replay, error) {
 			}
 			continue
 		}
-		if binding.Transformer != nil {
+		if binding.Transformer != nil || binding.BodyRepresentation != nil {
 			return nil, fmt.Errorf("replay parameter %s requires raw source JSON; decoded codec values cannot be persisted as source", binding.Name)
 		}
 		field, ok := p.plan.fields[path].Value(value)
@@ -122,6 +122,10 @@ func (r *Replay) source(ctx context.Context, binding BindingSpec, target reflect
 	policy := binding.BodyNullPolicy
 	if binding.rawBodyNullPolicy() {
 		policy = ""
+	}
+	if binding.BodyRepresentation != nil {
+		value, found, err := decoder.ValueWithBodyRepresentation(ctx, target, "", binding.BodyRepresentation, policy, binding.BodyInputTag)
+		return resolution{value: value, found: found}, err
 	}
 	if binding.BodyInputTag != "" {
 		value, found, err := decoder.ValueWithBodyInputTag(ctx, target, "", binding.BodyInputTag)

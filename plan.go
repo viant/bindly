@@ -2,6 +2,7 @@ package bindly
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"github.com/viant/bindly/internal/field"
 	"github.com/viant/bindly/state"
@@ -137,6 +138,20 @@ func (i *Injector) CompilePlan(target reflect.Type, specs ...BindingSpec) (*Plan
 		}
 		if err := spec.ValidateBodyNullPolicy(resolved.Type); err != nil {
 			return nil, fmt.Errorf("binding %s: %w", spec.Path, err)
+		}
+		if metadata := spec.BodyRepresentation; metadata != nil {
+			source := spec.SourceType
+			if source == nil {
+				source = resolved.Type
+			}
+			if spec.Location.Kind != "body" || spec.PresenceOnly || metadata.Original() != source {
+				return nil, fmt.Errorf("binding %s body representation must match its native body source type", spec.Path)
+			}
+			if !metadata.Changed() {
+				spec.BodyRepresentation = nil
+			} else {
+				spec.bodyRepresentationKey = fmt.Sprintf("%x", sha256.Sum256([]byte(metadata.Signature())))
+			}
 		}
 		plan.bindings = append(plan.bindings, spec)
 	}
