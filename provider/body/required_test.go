@@ -2,6 +2,7 @@ package body
 
 import (
 	"context"
+	"github.com/viant/tagly/choice"
 	"reflect"
 	"testing"
 )
@@ -30,5 +31,27 @@ func TestRequiredPresenceIsExplicitAndNotTruthiness(t *testing.T) {
 	source, _ := New([]byte(`{}`), "application/json", nil)
 	if _, _, err := source.Value(context.Background(), reflect.TypeOf(item{}), ""); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRequiredPresenceUsesScalarChoiceWireShape(t *testing.T) {
+	type fee struct {
+		Type *choice.ScalarValue `json:"feeTypeId" required:"true" choice:"4237:AD_SERVING" enumAccept:"scalar" enumStyle:"scalar" enumInteger:"passthrough"`
+	}
+	target := reflect.TypeFor[[]fee]()
+	for _, tc := range []struct {
+		raw   string
+		valid bool
+	}{
+		{`[{"feeTypeId":"AD_SERVING"}]`, true},
+		{`[{"feeTypeId":4237}]`, true},
+		{`[{"feeTypeId":null}]`, true},
+		{`[{}]`, false},
+	} {
+		t.Run(tc.raw, func(t *testing.T) {
+			if err := ValidateRequired([]byte(tc.raw), target); (err == nil) != tc.valid {
+				t.Fatalf("required presence: %v", err)
+			}
+		})
 	}
 }

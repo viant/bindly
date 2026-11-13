@@ -7,6 +7,8 @@ import (
 	xshape "github.com/viant/x/shape"
 	"reflect"
 	"strconv"
+
+	"github.com/viant/tagly/choice"
 )
 
 // ValidateRequired checks explicit required/optional field metadata using the
@@ -75,7 +77,9 @@ func (p *internalPlan) validateRequired(raw []byte, path string) error {
 			if required && !present {
 				return fmt.Errorf("field %s.%s is required", path, field.field.Name)
 			}
-			if present {
+			// The decoder validates scalar choices. Their storage fields are not
+			// nested members of the request.
+			if present && !isScalarChoiceField(field.field.Field.Tag, field.field.Field.ReflectedType) {
 				if err := field.child.validateRequired(value, path+"."+field.field.Name); err != nil {
 					return err
 				}
@@ -83,4 +87,11 @@ func (p *internalPlan) validateRequired(raw []byte, path string) error {
 		}
 	}
 	return nil
+}
+
+func isScalarChoiceField(tag reflect.StructTag, typ reflect.Type) bool {
+	if typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	return typ == reflect.TypeFor[choice.ScalarValue]() && tag.Get("enumAccept") == "scalar" && tag.Get("enumStyle") == "scalar"
 }
